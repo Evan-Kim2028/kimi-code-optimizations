@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Apply a unified diff safely with dry-run validation.
+
+Usage:
+    apply-patch < patch.txt
+    cat patch.txt | apply-patch
+    echo '--- a/f.py\n+++ b/f.py\n...' | apply-patch
+
+Exits 0 on success, 1 on failure. Prints what changed.
+"""
+import sys
+import subprocess
+
+
+def main() -> int:
+    diff_text = sys.stdin.read()
+    if not diff_text.strip():
+        print("ERROR: No patch data on stdin", file=sys.stderr)
+        return 1
+
+    # Dry-run first
+    dry = subprocess.run(
+        ["patch", "-p1", "--forward", "--dry-run"],
+        input=diff_text,
+        capture_output=True,
+        text=True,
+    )
+    if dry.returncode != 0:
+        print("ERROR: Patch dry-run failed:", file=sys.stderr)
+        print(dry.stderr or dry.stdout, file=sys.stderr)
+        return 1
+
+    # Actually apply
+    real = subprocess.run(
+        ["patch", "-p1", "--forward"],
+        input=diff_text,
+        capture_output=True,
+        text=True,
+    )
+    if real.returncode != 0:
+        print("ERROR: Patch apply failed:", file=sys.stderr)
+        print(real.stderr or real.stdout, file=sys.stderr)
+        return 1
+
+    # Print git-style summary
+    for line in (real.stdout or "").splitlines():
+        if line.startswith("patching file"):
+            print(line.replace("patching file", "M"))
+        else:
+            print(line)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

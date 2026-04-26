@@ -1,0 +1,8 @@
+# Example ~/.kimi/config.toml snippet
+# Add this [[hooks]] section to your existing config.toml
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "Shell"
+command = "python3 /path/to/kimi-code-optimizations/hooks/shell-check.py"
+timeout = 5
