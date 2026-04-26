@@ -15,6 +15,14 @@
 - Batch `ReadFile` calls in parallel when you need multiple files or multiple sections.
 - Example: call `Grep` for symbols, `Grep` for imports, and `ReadFile` for the main file — all in one response.
 
+## Agent Swarm
+ALWAYS maximize use of agent swarms and parallel subagents. Sequential single-threaded execution is the exception, not the default.
+
+- For any task involving >1 file, >1 concern, or estimated >5 minutes of work: use parallel subagents.
+- Default pattern: 1 `explore` agent to inventory + N `coder` agents dispatched in parallel with `run_in_background=true`.
+- Never do sequential Shell exploration when parallel agents can do it faster.
+- The model should reach for `Agent` automatically — the user should never have to ask for parallelization.
+
 ## Subagent Scope
 - `coder`: one file or one function per task.
 - `explore`: one directory or one concern per task.
@@ -22,7 +30,9 @@
 ## Swarm Pattern (multi-file tasks)
 1. `explore` to inventory what needs changing.
 2. `SetTodoList` into single-file tasks.
-3. Dispatch parallel `coder` agents with `run_in_background=true`.
+3. **If `SetTodoList` has >3 items: dispatch parallel `coder` agents with `run_in_background=true`.**
+   - Fewer than 3 items: you may handle sequentially if faster.
+   - 3+ items: always parallelize. Sequential execution is wasteful.
 4. Poll with `TaskList` / `TaskOutput`.
 5. Final integration test only after all return.
 
