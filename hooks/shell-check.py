@@ -2,6 +2,7 @@
 """PreToolUse hook for Shell commands. Rejects file-reading via Shell."""
 import json
 import re
+import shlex
 import sys
 
 data = json.load(sys.stdin)
@@ -24,35 +25,67 @@ def warn(msg: str) -> None:
 # 1. Reject local file-reading via Shell with *specific* guidance
 # ---------------------------------------------------------------------------
 
-# cat → ReadFile
-if re.search(r"\bcat\b", cmd):
-    block(
+# Map of banned bare commands → guidance message.
+# We tokenize with shlex and only block when the token is an actual command
+# (not a CLI flag like --head, not an env var like PAGER=cat, not JSON data).
+BANNED = {
+    "cat": (
         "Shell 'cat' is not allowed. "
         "Use ReadFile(path=<file>, line_offset=<n>, n_lines=<m>) to read specific sections. "
         "Use Glob(pattern=<glob>) to discover files."
-    )
-
-# head / tail → ReadFile with line_offset
-if re.search(r"\b(head|tail)\b", cmd):
-    block(
+    ),
+    "head": (
         "Shell 'head'/'tail' is not allowed. "
         "Use ReadFile(path=<file>, line_offset=<start_line>, n_lines=<count>) instead."
-    )
-
-# grep / rg → Grep
-if re.search(r"\b(grep|rg)\b", cmd):
-    block(
+    ),
+    "tail": (
+        "Shell 'head'/'tail' is not allowed. "
+        "Use ReadFile(path=<file>, line_offset=<start_line>, n_lines=<count>) instead."
+    ),
+    "grep": (
         "Shell 'grep'/'rg' is not allowed. "
         "Use Grep(pattern=<regex>, path=<dir_or_file>, output_mode='content') for discovery. "
         "Use Grep(pattern=<regex>, path=<file>, output_mode='content', -C=3) to read matching lines with context."
-    )
-
-# find / ls → Glob
-if re.search(r"\b(find|ls)\b", cmd):
-    block(
+    ),
+    "rg": (
+        "Shell 'grep'/'rg' is not allowed. "
+        "Use Grep(pattern=<regex>, path=<dir_or_file>, output_mode='content') for discovery. "
+        "Use Grep(pattern=<regex>, path=<file>, output_mode='content', -C=3) to read matching lines with context."
+    ),
+    "find": (
         "Shell 'find'/'ls' is not allowed. "
         "Use Glob(pattern=<glob>, include_dirs=True) to discover files and directories."
-    )
+    ),
+    "ls": (
+        "Shell 'find'/'ls' is not allowed. "
+        "Use Glob(pattern=<glob>, include_dirs=True) to discover files and directories."
+    ),
+}
+
+try:
+    tokens = shlex.split(cmd)
+except ValueError:
+    tokens = cmd.split()
+
+for token in tokens:
+    # Skip environment variable assignments (KEY=value, KEY+=value)
+    if "=" in token and not token.startswith("="):
+        continue
+
+    # Skip CLI flags (--head, -H, --tail, etc.)
+    if token.startswith("-"):
+        continue
+
+    # Skip tokens that contain structural characters (JSON, URLs, globs, etc.)
+    if any(c in token for c in '{}[]"\''):
+        continue
+
+    # Strip shell metacharacters that might surround a command
+    clean = token.strip("|;&()<>")
+
+    if clean in BANNED:
+        block(BANNED[clean])
+
 
 # ---------------------------------------------------------------------------
 # 2. Reject SSH-wrapped file-reading
