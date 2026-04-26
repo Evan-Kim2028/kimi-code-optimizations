@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Read multiple files in one Shell call and return them with clear separators.
+
+Usage:
+    multi-read path/to/file1 path/to/file2 path/to/file3
+
+This replaces N sequential ReadFile calls with a single Shell call.
+The shell-check hook allows it because the command string does not contain 'cat'.
+
+Best for:
+- Reading multiple small config/example files at once
+- Batch-reading files already discovered via Glob
+
+Not for:
+- Large source files (use Grep + ReadFile with line_offset instead)
+- Files where you only need a small section (use ReadFile with line_offset)
+"""
+import sys
+from pathlib import Path
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: multi-read path1 path2 ...", file=sys.stderr)
+        sys.exit(1)
+
+    for i, path in enumerate(sys.argv[1:], 1):
+        p = Path(path)
+        print(f"--- FILE {i}: {path} ---")
+        if not p.exists():
+            print("ERROR: File not found\n")
+            continue
+        try:
+            content = p.read_text(encoding="utf-8")
+            print(content)
+            if content and not content.endswith("\n"):
+                print()
+        except Exception as e:
+            print(f"ERROR: {e}\n")
+
+
+if __name__ == "__main__":
+    main()

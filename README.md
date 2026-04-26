@@ -12,8 +12,12 @@ Kimi Code CLI is a powerful AI coding agent, but like all LLM-based tools, it ca
 
 This repo gives you:
 1. **`AGENTS.md`** — Project-level rules that guide the model toward efficient patterns
-2. **`hooks/shell-check.py`** — A PreToolUse hook that rejects `cat`/`grep`/`cd` in Shell calls
-3. **`bin/apply-patch`** — A unified-diff helper that replaces fragile string replacement for multi-hunk edits
+2. **`hooks/shell-check.py`** — PreToolUse hook that rejects `cat`/`grep`/`cd` in Shell calls
+3. **`hooks/strreplace-check.py`** — PreToolUse hook that validates `StrReplaceFile` `old` strings exist before the tool fires (blocks guaranteed-fail turns)
+4. **`hooks/batch-nudge.py`** — PostToolUse hook that detects sequential similar calls and emits real-time batching tips
+5. **`bin/apply-patch`** — Safe unified-diff application with built-in dry-run
+6. **`bin/make-patch`** — Converts `old`/`new` text pairs into valid unified diffs (no manual line-number math)
+7. **`bin/multi-read`** — Reads multiple files in one Shell call (bypasses N sequential ReadFile calls for small files)
 
 ## Quick Start
 
@@ -24,12 +28,12 @@ git clone https://github.com/YOUR_USERNAME/kimi-code-optimizations.git
 cd kimi-code-optimizations
 ```
 
-### 2. Install the Hook
+### 2. Install Hooks
 
 ```bash
-# Copy hook script to ~/.kimi/hooks/
-mkdir -p ~/.kimi/hooks
-cp hooks/shell-check.py ~/.kimi/hooks/
+# Copy hook scripts to ~/.kimi/hooks/
+mkdir -p ~/.kimi/hooks ~/.kimi/state
+cp hooks/shell-check.py hooks/strreplace-check.py hooks/batch-nudge.py ~/.kimi/hooks/
 
 # Add to your ~/.kimi/config.toml
 cat >> ~/.kimi/config.toml << 'EOF'
@@ -39,22 +43,34 @@ event = "PreToolUse"
 matcher = "Shell"
 command = "python3 /home/evan/.kimi/hooks/shell-check.py"
 timeout = 5
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "StrReplaceFile"
+command = "python3 /home/evan/.kimi/hooks/strreplace-check.py"
+timeout = 3
+
+[[hooks]]
+event = "PostToolUse"
+matcher = ".*"
+command = "python3 /home/evan/.kimi/hooks/batch-nudge.py"
+timeout = 2
 EOF
 
 # Validate TOML
 python3 -c "import tomllib; tomllib.load(open('/home/evan/.kimi/config.toml', 'rb')); print('Valid')"
 ```
 
-> **Note:** The hook loads at session start. Start a **new** `kimi` conversation for it to take effect.
+> **Note:** Hooks load at session start. Start a **new** `kimi` conversation for them to take effect.
 
-### 3. Install apply-patch Helper
+### 3. Install Helper Scripts
 
 ```bash
 mkdir -p ~/bin
-cp bin/apply-patch ~/bin/
-chmod +x ~/bin/apply-patch
+cp bin/apply-patch bin/make-patch bin/multi-read ~/bin/
+chmod +x ~/bin/apply-patch ~/bin/make-patch ~/bin/multi-read
 
-# Verify it's in PATH
+# Verify they're in PATH
 echo $PATH | grep -q "$HOME/bin" || echo 'Add ~/bin to your PATH in ~/.bashrc'
 ```
 
@@ -80,7 +96,7 @@ Rules enforced at the prompt level:
 - **SSH** → Batch commands, no remote file reading, use `rsync` for editing
 - **File Editing** → Decision table for when to use `StrReplaceFile` vs `WriteFile` vs `apply-patch`
 
-### Hook (`hooks/shell-check.py`)
+### Hook: `shell-check.py`
 
 A PreToolUse hook that intercepts every `Shell` tool call:
 - **Blocks** `cat`, `head`, `tail`, `find`, `grep`, `rg` (local file reading)
@@ -89,7 +105,26 @@ A PreToolUse hook that intercepts every `Shell` tool call:
 
 The hook reads JSON from stdin (Kimi CLI passes tool call data) and exits 2 to block.
 
-### apply-patch (`bin/apply-patch`)
+### Hook: `strreplace-check.py`
+
+A PreToolUse hook that intercepts every `StrReplaceFile` tool call:
+- **Reads** the target file and checks whether the `old` string actually exists
+- **Blocks** the call (exit 2) if the text is missing, with guidance to re-read the file
+- **Fail-open** if the file can't be read (doesn't block on I/O errors)
+
+This eliminates wasted turns where the model's remembered copy of a file has drifted from reality.
+
+### Hook: `batch-nudge.py`
+
+A PostToolUse hook that maintains a sliding window of recent tool calls per session:
+- **Detects** 3+ sequential calls of the same tool type (`ReadFile`, `Grep`, `Shell`, `Agent`, `StrReplaceFile`)
+- **Emits** a warning to stderr suggesting parallel batching
+- **State** is stored in `~/.kimi/state/batch-tracker-<session_id>.json` (auto-cleaned, no persistent bloat)
+
+This provides tactile feedback so the model learns to batch in real time.
+
+
+### `apply-patch` (`bin/apply-patch`)
 
 A thin wrapper around GNU `patch` with built-in safety:
 1. Reads unified diff from stdin
@@ -114,6 +149,36 @@ WriteFile(path="/tmp/fix.patch", content="""
 Shell(command="apply-patch < /tmp/fix.patch")
 ```
 
+### `make-patch` (`bin/make-patch`)
+
+Converts a simple `old` → `new` text replacement into a valid unified diff. Use it when you have a string replacement but want the safety of `apply-patch` (dry-run validation, proper context lines).
+
+**Usage:**
+```bash
+# Generate patch from old/new pair
+Shell(command="make-patch src/main.py --old 'def old():' --new 'def new():' > /tmp/fix.patch")
+
+# Apply it
+Shell(command="apply-patch < /tmp/fix.patch")
+```
+
+The tool validates that `old` exists in the file before generating the patch, so you get the same pre-validation as `strreplace-check.py`.
+
+### `multi-read` (`bin/multi-read`)
+
+Reads multiple files in a single Shell call. This is more efficient than N sequential ReadFile calls when you already know the paths (e.g., after a `Glob` discovery pass) and the files are small.
+
+**Usage:**
+```bash
+Shell(command="multi-read README.md ARTICLE.md AGENTS.md config.toml.example")
+```
+
+**Caveats:**
+- Only use for small files (< 100 KB each). For large files, use `Grep` + `ReadFile` with `line_offset`.
+- The shell-check hook allows this because the command string doesn't contain `cat`; the script reads files internally.
+- Returns formatted output with `--- FILE N: path ---` separators so the model can parse each file's contents.
+
+
 ## Why Not Codex's `apply_patch`?
 
 OpenAI Codex has a native `apply_patch` tool with 4-level fuzzy matching. We evaluated porting it but chose standard unified diff + `patch` because:
@@ -133,9 +198,13 @@ kimi-code-optimizations/
 ├── LICENSE                   # MIT
 ├── config.toml.example       # Hook config snippet
 ├── bin/
-│   └── apply-patch           # Safe patch application helper
+│   ├── apply-patch           # Safe patch application helper
+│   ├── make-patch            # Old/new → unified diff converter
+│   └── multi-read            # Read multiple files in one Shell call
 └── hooks/
-    └── shell-check.py        # PreToolUse hook script
+    ├── shell-check.py        # PreToolUse hook: block cat/grep/cd
+    ├── strreplace-check.py   # PreToolUse hook: validate old string exists
+    └── batch-nudge.py        # PostToolUse hook: detect sequential calls
 ```
 
 ## Requirements
@@ -143,6 +212,8 @@ kimi-code-optimizations/
 - Python 3.10+
 - GNU `patch` 2.7+ (usually preinstalled on Linux/macOS)
 - Kimi Code CLI 1.39+
+
+> **Note:** The hooks load at session start. Start a **new** `kimi` conversation after installing them.
 
 ## License
 

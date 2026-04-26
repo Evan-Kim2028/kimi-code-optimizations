@@ -5,4 +5,16 @@
 event = "PreToolUse"
 matcher = "Shell"
 command = "python3 /path/to/kimi-code-optimizations/hooks/shell-check.py"
+timeout = 10
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "StrReplaceFile"
+command = "python3 /path/to/kimi-code-optimizations/hooks/strreplace-check.py"
+timeout = 5
+
+[[hooks]]
+event = "PostToolUse"
+matcher = ".*"
+command = "python3 /path/to/kimi-code-optimizations/hooks/batch-nudge.py"
 timeout = 5

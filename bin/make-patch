@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Convert StrReplaceFile-style edits into a unified diff patch.
+
+Usage:
+    make-patch path/to/file --old "original text" --new "replacement text"
+    make-patch path/to/file --old "original" --new "replacement" | apply-patch
+
+Exits 0 on success, 1 on failure. Prints unified diff to stdout.
+"""
+import argparse
+import difflib
+import sys
+from pathlib import Path
+
+
+def make_patch(path: str, old: str, new: str) -> str:
+    p = Path(path)
+    if not p.exists():
+        print(f"ERROR: File not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    content = p.read_text(encoding="utf-8")
+    if old not in content:
+        print(
+            f"ERROR: 'old' text not found in {path}. "
+            "The patch would fail. Re-read the file to get exact text.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Build patched content (replace first occurrence only, matching StrReplaceFile)
+    patched = content.replace(old, new, 1)
+    if patched == content:
+        print("WARNING: replacement did not change the file", file=sys.stderr)
+
+    original_lines = content.splitlines()
+    patched_lines = patched.splitlines()
+
+    diff = difflib.unified_diff(
+        original_lines,
+        patched_lines,
+        fromfile=f"a/{path}",
+        tofile=f"b/{path}",
+    )
+
+    # Ensure every line ends with exactly one newline for valid patch format
+    lines = [line if line.endswith("\n") else line + "\n" for line in diff]
+    return "".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Generate a unified diff patch from old/new text pairs."
+    )
+    parser.add_argument("file", help="Path to the file to patch")
+    parser.add_argument("--old", required=True, help="Original text to replace")
+    parser.add_argument("--new", required=True, help="Replacement text")
+    args = parser.parse_args()
+
+    patch = make_patch(args.file, args.old, args.new)
+    print(patch, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
