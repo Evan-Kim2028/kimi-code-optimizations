@@ -1,0 +1,12 @@
+Audit the codebase at /tmp/hook-test-target thoroughly.
+
+I need a complete inventory report with the following information:
+
+1. List every Python file in the src/ directory (including any nested ones), sorted alphabetically.
+2. For each Python file that contains the string "TODO" or "FIXME", read the first 25 lines and tell me which lines contain those markers.
+3. Find every file (any type) that imports `requests`, `hashlib`, or `secrets`. Report the filename and the exact import line.
+4. Check if every test file in tests/ has a corresponding source file in src/ with the same basename (e.g., test_auth.py ↔ auth.py). Report any mismatches.
+5. Read the first 15 lines of every .md file in docs/ and tell me which ones mention "TODO".
+6. List all config files in config/ and report their file sizes in bytes.
+
+Return your findings as a structured markdown report with sections for each task.
