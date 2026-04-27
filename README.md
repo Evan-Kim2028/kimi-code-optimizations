@@ -179,6 +179,34 @@ Shell(command="multi-read README.md ARTICLE.md AGENTS.md config.toml.example")
 - Returns formatted output with `--- FILE N: path ---` separators so the model can parse each file's contents.
 
 
+## Known Bugs & Patches
+
+### Background Subagents Bypass PreToolUse Hooks (Fixed)
+
+**Bug:** `BackgroundAgentRunner._run_core()` in Kimi CLI does **not** propagate the parent's `HookEngine` to the subagent soul, while the foreground runner does. This means background subagents (launched with `run_in_background=True`) completely bypass all PreToolUse hooks — including `shell-check.py`.
+
+**Impact:** ~60% of blocked-pattern Shell calls in our quantitative analysis were slipping through via background subagents.
+
+**Patch:** `patches/background-subagent-hook-engine.patch`
+
+Apply to your Kimi CLI installation:
+```bash
+# Find your kimi-cli install path
+KIMI_CLI=$(python3 -c "import kimi_cli; print(kimi_cli.__path__[0])")
+patch -p0 -d / < patches/background-subagent-hook-engine.patch
+```
+
+Or apply manually by adding these 3 lines after `prepare_soul()` in `background/agent_runner.py`:
+```python
+# Propagate hook engine from parent runtime to subagent soul
+if self._runtime.hook_engine is not None:
+    soul.set_hook_engine(self._runtime.hook_engine)
+```
+
+**Upstream:** This should be filed with the Kimi CLI team. The foreground runner already does this at `subagents/runner.py:247`; background runner just missed it.
+
+---
+
 ## Why Not Codex's `apply_patch`?
 
 OpenAI Codex has a native `apply_patch` tool with 4-level fuzzy matching. We evaluated porting it but chose standard unified diff + `patch` because:

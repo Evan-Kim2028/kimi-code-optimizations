@@ -1,0 +1,13 @@
+--- /tmp/original_agent_runner.py	2026-04-27 11:08:31.077583104 -0400
++++ /home/evan/.local/share/uv/tools/kimi-cli/lib/python3.13/site-packages/kimi_cli/background/agent_runner.py	2026-04-27 11:06:37.507463403 -0400
+@@ -161,6 +161,10 @@
+             on_stage=output.stage,
+         )
+ 
++        # Propagate hook engine from parent runtime to subagent soul
++        if self._runtime.hook_engine is not None:
++            soul.set_hook_engine(self._runtime.hook_engine)
++
+         async def _ui_loop_fn(wire: Wire) -> None:
+             wire_ui = wire.ui_side(merge=True)
+             while True:
