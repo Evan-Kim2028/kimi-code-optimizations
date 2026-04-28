@@ -16,6 +16,7 @@ This repo gives you:
 2b. **`hooks/shell-check-blocking.py`** — Aggressive variant that **blocks** `cat`/`grep`/`cd` entirely (exit 2)
 3. **`hooks/strreplace-check.py`** — PreToolUse hook that validates `StrReplaceFile` `old` strings exist before the tool fires (blocks guaranteed-fail turns)
 4. **`hooks/batch-nudge.py`** — PostToolUse hook that detects sequential similar calls and emits real-time batching tips
+5. **`hooks/swarm-nudge.py`** — PostToolUse hook that detects complex manual work and nudges toward subagent swarm decomposition
 5. **`bin/apply-patch`** — Safe unified-diff application with built-in dry-run
 6. **`bin/make-patch`** — Converts `old`/`new` text pairs into valid unified diffs (no manual line-number math)
 7. **`bin/multi-read`** — Reads multiple files in one Shell call (bypasses N sequential ReadFile calls for small files)
@@ -137,6 +138,17 @@ A PostToolUse hook that maintains a sliding window of recent tool calls per sess
 - **State** is stored in `~/.kimi/state/batch-tracker-<session_id>.json` (auto-cleaned, no persistent bloat)
 
 This provides tactile feedback so the model learns to batch in real time.
+
+### Hook: `swarm-nudge.py`
+
+A PostToolUse hook that tracks overall session complexity and nudges toward subagent decomposition:
+- **Detects** 6+ manual discovery calls (`ReadFile`/`Grep`) with no agents → suggests parallel `explore` agents
+- **Detects** 12+ total tool calls with ≤1 agent → suggests swarm decomposition into `coder`/`explore` agents
+- **Detects** 3+ sequential `Agent` calls without `run_in_background=true` → suggests parallel dispatch
+- **Detects** complex multi-step `Shell` with no agents → suggests parallelizing via subagents
+- **State** is stored in `~/.kimi/state/swarm-tracker-<session_id>.json`
+
+This trains the model to think *swarm-first*: before doing work manually, ask "Can I delegate this to parallel subagents?"
 
 
 ### `apply-patch` (`bin/apply-patch`)

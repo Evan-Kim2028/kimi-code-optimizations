@@ -17,6 +17,8 @@ The default is NOT to respond directly. The default is to parallelize.
 
 **Rule of thumb: If you need more than 2 tool calls to complete the task, default to parallel subagents.**
 
+**Swarm-first mindset:** Your first instinct on every task should be "Can I decompose this into parallel subagents?" Not "Let me do this step by step." The user didn't hire you to be a single-threaded worker — they hired you to be an orchestrator of parallel intelligence.
+
 Sequential single-threaded execution is the **exception**, not the default. The model should reach for `Agent` automatically — the user should never have to ask for parallelization.
 
 ### Default Swarm Pattern
