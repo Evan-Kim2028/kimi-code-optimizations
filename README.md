@@ -12,7 +12,8 @@ Kimi Code CLI is a powerful AI coding agent, but like all LLM-based tools, it ca
 
 This repo gives you:
 1. **`AGENTS.md`** — Project-level rules that guide the model toward efficient patterns
-2. **`hooks/shell-check.py`** — PreToolUse hook that rejects `cat`/`grep`/`cd` in Shell calls
+2. **`hooks/shell-check.py`** — PreToolUse hook that coaches the model away from `cat`/`grep`/`cd` in Shell calls (tips, non-blocking)
+2b. **`hooks/shell-check-blocking.py`** — Aggressive variant that **blocks** `cat`/`grep`/`cd` entirely (exit 2)
 3. **`hooks/strreplace-check.py`** — PreToolUse hook that validates `StrReplaceFile` `old` strings exist before the tool fires (blocks guaranteed-fail turns)
 4. **`hooks/batch-nudge.py`** — PostToolUse hook that detects sequential similar calls and emits real-time batching tips
 5. **`bin/apply-patch`** — Safe unified-diff application with built-in dry-run
@@ -96,14 +97,28 @@ Rules enforced at the prompt level:
 - **SSH** → Batch commands, no remote file reading, use `rsync` for editing
 - **File Editing** → Decision table for when to use `StrReplaceFile` vs `WriteFile` vs `apply-patch`
 
-### Hook: `shell-check.py`
+### Hook: `shell-check.py` (Coaching — Recommended)
 
-A PreToolUse hook that intercepts every `Shell` tool call:
+A PreToolUse hook that intercepts every `Shell` tool call and emits contextual 💡 tips to stderr:
+- **Tips** on `cat`, `head`, `tail`, `find`, `grep`, `rg` → suggests `ReadFile` / `Glob` / `Grep`
+- **Tips** on `cd` → suggests absolute paths or `git -C`
+- **Positive reinforcement** for good Shell usage (`git`, `docker`, `pip`, complex pipelines)
+
+Always exits 0 (non-blocking). The model sees the tip in the tool result and learns in real time.
+
+**Quantitative results from 5h of sessions:**
+- Tips fire on ~9% of Shell calls
+- Sessions referencing AGENTS.md show **+10.3pp higher native tool usage** (44.6% vs 34.3%)
+- **42% of tipped sessions** show reduced Shell usage after receiving a tip
+
+### Hook: `shell-check-blocking.py` (Blocking — Aggressive)
+
+The original blocking variant. Same detection logic but exits 2 to hard-reject:
 - **Blocks** `cat`, `head`, `tail`, `find`, `grep`, `rg` (local file reading)
 - **Blocks** `ssh host "cat file"` (remote file reading)
-- **Warns** on `cd` (suggests `git -C` or absolute paths)
+- **Warns** on `cd`
 
-The hook reads JSON from stdin (Kimi CLI passes tool call data) and exits 2 to block.
+Use this if you want enforcement rather than coaching. Swap the filename in `config.toml` to switch modes.
 
 ### Hook: `strreplace-check.py`
 
@@ -230,7 +245,8 @@ kimi-code-optimizations/
 │   ├── make-patch            # Old/new → unified diff converter
 │   └── multi-read            # Read multiple files in one Shell call
 └── hooks/
-    ├── shell-check.py        # PreToolUse hook: block cat/grep/cd
+    ├── shell-check.py        # PreToolUse hook: coach cat/grep/cd
+    ├── shell-check-blocking.py # PreToolUse hook: block cat/grep/cd (aggressive)
     ├── strreplace-check.py   # PreToolUse hook: validate old string exists
     └── batch-nudge.py        # PostToolUse hook: detect sequential calls
 ```
