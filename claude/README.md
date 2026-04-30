@@ -55,23 +55,27 @@ Claude Code already has one architectural advantage Kimi lacks: **prompt caching
 
 ---
 
-### `cheap-subagent-router.py` — Model Cost Triage (Non-blocking)
+### `cheap-subagent-router.py` — Model + Effort Cost Triage (Non-blocking)
 
-**Problem:** Claude Code's `Agent` tool accepts an optional `model` parameter (`"haiku" | "sonnet" | "opus"`). When omitted, the subagent inherits the parent model — typically Opus 4.7. Across 817 dispatches, the breakdown was 335 `general-purpose` and 82 `Explore`; most of the `Explore` calls were cheap discovery (find/grep/locate) that Haiku 4.5 handles fine at roughly an order-of-magnitude lower cost.
+**Problem:** Claude Code's `Agent` tool accepts two cost-relevant overrides per dispatch: `model` (`"haiku" | "sonnet" | "opus"`) and `effort` (`"low" | "medium" | "high" | "xhigh" | "max"`). When omitted, both inherit from the parent — typically Opus 4.7 + medium effort. Across 817 historical dispatches the breakdown was 335 `general-purpose` and 82 `Explore`; most `Explore` calls were cheap discovery that Haiku 4.5 + low effort handles fine at roughly an order-of-magnitude lower cost.
 
-**What it does:** Reads the dispatch's `subagent_type`, `description`, and `prompt`, and emits a coaching tip:
+**What it does:** Reads the dispatch's `subagent_type`, `description`, `prompt`, and any explicit `model`/`effort` already set, then emits a coaching tip suggesting only the *unset* parameter(s):
 
-| Signal | Suggestion |
-|--------|------------|
-| `subagent_type == "Explore"` or short prompt with discovery verbs (find / locate / grep / list / which file / search for) | `model: "haiku"` |
-| Implementation verbs (implement / write / edit / fix / refactor / port / wire up) | `model: "sonnet"` |
-| Review / audit / architecture / threat-model / security / cross-reference | **silent** — Opus default is the right call |
-| Generic dispatch with no strong signal | `model: "sonnet"` (middle path) |
-| `model` already set | **silent** — respect explicit choice |
+| Signal | Model | Effort |
+|--------|-------|--------|
+| `subagent_type == "Explore"` or short prompt with discovery verbs | `haiku` | `low` |
+| Implementation verbs (implement / write / edit / fix / refactor / port / wire up) | `sonnet` | `medium` |
+| Review / audit / architecture / threat-model / security / cross-reference | **silent** | **silent** |
+| Generic dispatch with no strong signal | `sonnet` | (inherit) |
+| Both `model` and `effort` already set | **silent** | **silent** |
 
-The point is to make Opus a *conscious choice*, not an *inherited default*. The hook never blocks; the model is free to ignore the tip and stick with Opus when the task warrants it.
+The point is to make Opus *and* high effort a *conscious choice*, not an *inherited default*. Effort is dialed independently of model — a `model: "sonnet"` dispatch with `effort: "low"` is materially cheaper than the same dispatch at default effort, and that's frequently the right call for scoped work.
 
-**No Kimi equivalent.** Kimi CLI does not expose per-subagent model selection, so this hook is Claude-Code-specific.
+The hook never blocks; the model is free to ignore the tip and stick with the parent's settings when the task warrants it.
+
+**No Kimi equivalent.** Kimi CLI does not expose per-subagent model or effort selection, so this hook is Claude-Code-specific.
+
+**Supported `effort` values** (per [Claude Code model config docs](https://code.claude.com/docs/en/model-config#adjust-effort-level)): `low`, `medium`, `high`, `xhigh`, `max`. The valid set is model-dependent; this hook only ever suggests `low` or `medium`, which all current Claude models support.
 
 ## Installation
 
