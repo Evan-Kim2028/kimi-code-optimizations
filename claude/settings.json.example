@@ -27,6 +27,19 @@
             "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/re-read-guard.py"
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/parallel-agent-guard.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/cheap-subagent-router.py"
+          }
+        ]
       }
     ]
   }
