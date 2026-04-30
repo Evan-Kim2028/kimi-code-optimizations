@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/edit-check.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/bash-check.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/re-read-guard.py"
+          }
+        ]
+      }
+    ]
+  }
+}
