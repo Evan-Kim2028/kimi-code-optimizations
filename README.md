@@ -34,7 +34,12 @@ This repo gives you:
 7. **`hooks/discovery-intercept.py`** — PreToolUse hook that intercepts ReadFile/Grep/Shell calls during long manual streaks and asks "should this be an agent?" *before* the call fires
 8. **`hooks/re-read-guard.py`** — PreToolUse hook that warns when the model re-reads an unchanged file this session
 9. **`hooks/line-offset-enforcer.py`** — PreToolUse hook that nudges toward `line_offset` on large file reads
-10. **`bin/apply-patch`** — Safe unified-diff application with built-in dry-run
+10. **`hooks/parallel-agent-guard-v2.py`** — Enhanced PreToolUse hook with timestamp-based same-turn detection and escalating warnings for sequential agent dispatch
+11. **`hooks/background-agent-nudge.py`** — PreToolUse hook that suggests `run_in_background=true` for discovery/explore tasks
+12. **`hooks/todo-persistence-check.py`** — PostToolUse hook that detects todo list resets and encourages incremental updates
+13. **`hooks/taskoutput-guard.py`** — PreToolUse hook that ensures `TaskList` is called before `TaskOutput` polling
+14. **`hooks/re-read-turn-guard.py`** — PostToolUse hook that guards against excessive same-turn file re-reads
+15. **`bin/apply-patch`** — Safe unified-diff application with built-in dry-run
 11. **`bin/make-patch`** — Converts `old`/`new` text pairs into valid unified diffs (no manual line-number math)
 12. **`bin/multi-read`** — Reads multiple files in one Shell call (bypasses N sequential ReadFile calls for small files)
 
@@ -342,25 +347,110 @@ use ReadFile(path='src/main.py', line_offset=..., n_lines=...). If you truly
 need the full file, proceed.
 ```
 
-### Hook: `parallel-agent-guard.py` (Speed + Context)
+### Hook: `parallel-agent-guard-v2.py` (Speed + Context)
 
-A **PreToolUse** hook that intercepts sequential `Agent` dispatch and nudges toward parallel background execution.
+An enhanced **PreToolUse** hook that intercepts sequential `Agent` dispatch and nudges toward parallel background execution.
 
 **Why it matters:** Models often dispatch agents one at a time (`run_in_background=false` or missing), then wait for each to finish. This wastes wall-clock time and keeps both agent prompts in parent context longer than necessary.
 
-**Mechanism:**
-- Tracks the last tool call type per session
-- If the current call is `Agent` and the previous call was also `Agent` without `run_in_background=true` → emit warning
-- Allows background agents to pass through silently
+**v2 improvements:**
+- **Timestamp-based same-turn detection**: If two `Agent` calls arrive within 3 seconds, they're assumed to be in the same turn (legitimate parallel dispatch) and no warning is emitted. This avoids false positives.
+- **Escalating warnings**: First sequential dispatch gets a gentle tip; third consecutive sequential dispatch gets an urgent warning.
+- **Explicit batching example**: The warning now shows the exact pattern for dispatching multiple agents in one turn.
 
 **Example output:**
 ```
 ⚠️ PARALLEL GUARD: You're about to dispatch an agent sequentially.
 If this agent is independent of the previous one, set run_in_background=true
 and dispatch them together in the same turn.
+Sequential agent dispatch wastes wall-clock time and keeps both agent prompts
+in parent context longer than necessary.
 ```
 
-**State** is stored in `~/.kimi/state/parallel-agent-guard-<session_id>.json`
+**State** is stored in `~/.kimi/state/parallel-agent-guard-v2-<session_id>.json`
+
+### Hook: `background-agent-nudge.py` (Speed + Context)
+
+A **PreToolUse** hook that suggests `run_in_background=true` for agents that appear to be doing independent discovery or analysis work.
+
+**Why it matters:** Data from session logs shows **71.5% of agents run in foreground** even when they're clearly independent tasks (exploration, audits, analysis). Foreground agents block the parent for no reason.
+
+**Mechanism:**
+- Scores agent prompts for independence using keyword heuristics
+- Discovery keywords (`explore`, `audit`, `analyze`, `investigate`) increase the score
+- Dependent keywords (`fix`, `then`, `after that`, `before proceeding`) decrease the score
+- If score ≥ 2 and `run_in_background` is false/missing → emit nudge
+- Capped at 5 tips per session to avoid spam
+
+**Example output:**
+```
+💡 BACKGROUND NUDGE: This agent looks like independent discovery keywords:
+explore, investigate. Consider run_in_background=true so the parent can
+continue working or dispatch other agents while it runs. Exploration, audits,
+and analysis are almost always safe to background.
+```
+
+**State** is stored in `~/.kimi/state/background-agent-nudge-<session_id>.json`
+
+### Hook: `todo-persistence-check.py` (Plan Stability)
+
+A **PostToolUse** hook that detects when `SetTodoList` completely replaces a list that had completed items, destroying completion history.
+
+**Why it matters:** Session log analysis shows models frequently rebuild todo lists from scratch mid-session (e.g., 7 items done → suddenly 5 new items with 0 done). This creates plan instability and loses progress tracking.
+
+**Detects:**
+- **Todo reset**: Previous list had ≥2 done items; new list has 0 done but >0 pending/in_progress
+- **Todo shrink**: List got smaller by 2+ items without any new completions (silent task dropping)
+
+**Example output:**
+```
+⚠️ TODO RESET: You just replaced a list with 4 completed tasks with a fresh
+list of 5 new items. This destroys completion history. Prefer updating
+individual item statuses or adding new items to the existing list.
+```
+
+**State** is stored in `~/.kimi/state/todo-persistence-<session_id>.json`
+
+### Hook: `taskoutput-guard.py` (Efficient Polling)
+
+A **PreToolUse** hook that ensures `TaskList` is called before `TaskOutput` when polling background tasks.
+
+**Why it matters:** 29% of sessions that poll background tasks call `TaskOutput` without first checking `TaskList`. This wastes turns polling task IDs that may have crashed, completed, or never started.
+
+**Mechanism:**
+- Tracks the last 15 tool calls in a sliding window
+- If `TaskOutput` is called with no `TaskList` in the recent window → emit warning
+- Capped at 5 tips per session
+
+**Example output:**
+```
+⚠️ TASK POLL GUARD: You're about to call TaskOutput without checking which
+tasks are active first. Call TaskList to verify running tasks, then TaskOutput
+only for active ones. This prevents polling stale/crashed tasks.
+```
+
+**State** is stored in `~/.kimi/state/taskoutput-guard-<session_id>.json`
+
+### Hook: `re-read-turn-guard.py` (Context Saver)
+
+A **PostToolUse** hook that guards against reading the same file multiple times within a short sliding window of recent calls.
+
+**Why it matters:** Session logs show up to **124 same-turn file re-reads** in a single session. The session-level `re-read-guard.py` catches across-session re-reads; this catches intra-turn storms where the model repeatedly reads the same file before the context even changes.
+
+**Mechanism:**
+- Maintains a sliding window of the last 20 `ReadFile` calls
+- Warns when the same file is read ≥3 times in the window
+- Only warns once per threshold crossing (not on every subsequent read)
+
+**Example output:**
+```
+⚠️ TURN REREAD GUARD: You've read 'src/auth.py' 3 times in recent calls.
+Are you re-reading because you forgot the content? Store key findings in your
+reasoning or use line_offset for targeted sections. Repeated full-file reads
+waste context.
+```
+
+**State** is stored in `~/.kimi/state/turn-reads-<session_id>.json`
 
 ### Hook: `shell-output-truncator.py` (Context Saver)
 
@@ -503,7 +593,12 @@ kimi-code-optimizations/
 │   ├── swarm-nudge-v2.py       # PostToolUse: v2 streak-aware swarm detection
 │   ├── discovery-intercept.py  # PreToolUse: intercept manual discovery streaks
 │   ├── re-read-guard.py        # PreToolUse: warn on re-reading unchanged files
-│   └── line-offset-enforcer.py # PreToolUse: nudge toward line_offset on large files
+│   ├── line-offset-enforcer.py # PreToolUse: nudge toward line_offset on large files
+│   ├── parallel-agent-guard-v2.py  # PreToolUse: v2 sequential agent guard with same-turn detection
+│   ├── background-agent-nudge.py   # PreToolUse: nudge toward background for discovery agents
+│   ├── todo-persistence-check.py   # PostToolUse: detect todo list resets
+│   ├── taskoutput-guard.py         # PreToolUse: ensure TaskList before TaskOutput
+│   └── re-read-turn-guard.py       # PostToolUse: guard same-turn re-read storms
 └── claude/                          # Claude Code CLI hooks
     ├── README.md                    # Claude-specific installation and diff table
     ├── settings.json.example        # Hook config snippet for ~/.claude/settings.json

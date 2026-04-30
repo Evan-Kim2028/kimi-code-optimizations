@@ -40,7 +40,21 @@ timeout = 2
 [[hooks]]
 event = "PreToolUse"
 matcher = "Agent"
-command = "python3 /home/evan/.kimi/hooks/parallel-agent-guard.py"
+command = "python3 /home/evan/.kimi/hooks/parallel-agent-guard-v2.py"
+timeout = 2
+
+# NEW: Nudge toward run_in_background=true for discovery/independent agents
+[[hooks]]
+event = "PreToolUse"
+matcher = "Agent"
+command = "python3 /home/evan/.kimi/hooks/background-agent-nudge.py"
+timeout = 2
+
+# NEW: Ensure TaskList is called before TaskOutput polling
+[[hooks]]
+event = "PreToolUse"
+matcher = "TaskOutput"
+command = "python3 /home/evan/.kimi/hooks/taskoutput-guard.py"
 timeout = 2
 
 # NEW: Detect Shell commands with unbounded output
@@ -63,6 +77,20 @@ timeout = 2
 event = "PostToolUse"
 matcher = ".*"
 command = "python3 /home/evan/.kimi/hooks/swarm-nudge-v2.py"
+timeout = 2
+
+# NEW: Detect SetTodoList resets and encourage incremental updates
+[[hooks]]
+event = "PostToolUse"
+matcher = "SetTodoList"
+command = "python3 /home/evan/.kimi/hooks/todo-persistence-check.py"
+timeout = 2
+
+# NEW: Guard against excessive same-turn file re-reads
+[[hooks]]
+event = "PostToolUse"
+matcher = "ReadFile"
+command = "python3 /home/evan/.kimi/hooks/re-read-turn-guard.py"
 timeout = 2
 
 # (Optional) Original swarm nudge — kept for comparison or if you prefer total-count logic

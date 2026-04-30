@@ -46,6 +46,22 @@ For any task involving >1 file, >1 concern, or estimated >5 minutes of work:
 4. **Poll** with `TaskList` / `TaskOutput`.
 5. **Final integration test** only after all return.
 
+### Agent Dispatch Discipline
+
+**Parallel dispatch in the same turn:** When you have multiple independent agents to dispatch, put ALL of them in ONE assistant message. Do not send one agent, wait for it to return, then send the next. Example:
+
+```
+Agent(run_in_background=True, description="Fix auth", prompt="...")
+Agent(run_in_background=True, description="Fix billing", prompt="...")
+Agent(run_in_background=True, description="Fix caching", prompt="...")
+```
+
+Then poll all three with `TaskList` → `TaskOutput` loops.
+
+**Background by default for exploration:** `explore` agents should almost always use `run_in_background=true`. The parent does not need to block while an explore agent maps a directory. Dispatch multiple explores in parallel, then synthesize their results.
+
+**Foreground only for blocking work:** Use `run_in_background=false` only when the agent's output is required before ANY other work can proceed. If you can do other tasks while it runs, background it.
+
 **Research is work too.** If the user asks you to investigate multiple things (e.g., "how does auth work AND how does billing work"), do not do two sequential Grep/ReadFile passes. Dispatch two `explore` agents in parallel.
 
 ### The 4-Call Rule
@@ -80,6 +96,20 @@ You are configured for **high-effort thinking**. Use it for **analysis and decis
 
 **The swarm + conciseness combo:**
 Parallel subagents are how you think deeply without thinking long. Instead of one 4,000-character reasoning block about auth + billing + caching, dispatch three `explore` agents in parallel and synthesize their results. The total intelligence is higher; the latency is lower; the reasoning stays sharp.
+
+## SetTodoList Discipline
+
+- **Create the FULL todo list once** at task start. Do NOT rebuild the list from scratch mid-session.
+- **Update individual item statuses** (`pending` → `in_progress` → `done`), never replace the whole list.
+- **If you discover new work**, ADD items to the existing list, don't recreate it.
+- **Query mode** (`SetTodoList` with no `todos` arg) is free — use it before claiming completion.
+- **Never drop completed items.** If a todo list shrinks without new completions, you've lost history.
+
+## Background Task Polling
+
+- **ALWAYS call `TaskList` before `TaskOutput`** to verify which background tasks are still active.
+- **Never call `TaskOutput` on a task ID from memory** without confirming it exists in `TaskList`.
+- Poll pattern: `TaskList` → filter active → `TaskOutput` for each active → repeat until all done.
 
 ## File Discovery
 
@@ -181,6 +211,7 @@ The context window is finite (~212k effective tokens). Every tool call result st
 
 - **Delegate discovery to subagents.** A parent that does 20 manual `ReadFile`/`Grep` calls keeps 20 results in context. A parent that delegates to an `explore` agent keeps 1 summary. This is the single biggest lever for context efficiency.
 - **Never re-read a file in the same session unless it changed.** After compaction, the model forgets — but re-reading burns tokens twice. Check `git diff` or trust your notes before re-reading.
+- **Never re-read the same file multiple times in the same turn.** If you need to reference file contents, store key data in your reasoning or use `line_offset` for targeted sections.
 - **Use `ReadFile` with `line_offset` aggressively.** Reading a 500-line file when you need 20 lines wastes ~2k tokens. Grep first, then read the relevant window.
 - **If a task has >3 files remaining, delegate.** Spin up parallel `coder` agents and let the parent go idle. Integration work that needs >2 tool calls should also be delegated.
 - **If context feels heavy, use `/compact`.** Manual compaction with a focus instruction (e.g., `/compact keep the API contract, drop exploration noise`) preserves what matters.
