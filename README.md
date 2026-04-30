@@ -1,14 +1,25 @@
-# Kimi Code CLI Optimizations
+# CLI Coding Agent Optimizations
 
-A productivity toolkit for [Kimi Code CLI](https://github.com/moonshot-ai/kimi-cli) — enforcing efficient tool usage, adding a safe `apply_patch` workaround, and eliminating wasted turns on file-navigation busywork.
+A productivity toolkit for [Kimi Code CLI](https://github.com/moonshot-ai/kimi-cli) and [Claude Code CLI](https://claude.ai/code) — enforcing efficient tool usage and eliminating wasted turns on file-navigation busywork.
 
 ## What's This?
 
-Kimi Code CLI is a powerful AI coding agent, but like all LLM-based tools, it can burn turns on inefficient patterns:
+AI coding agents are powerful, but they burn turns on inefficient patterns. The patterns differ by CLI, but the fix is the same: **hooks as in-conversation training signals** that redirect behavior in real time.
+
+This repo covers two CLIs:
+
+- **[`hooks/`](#kimi-code-cli-hooks) + [`bin/`](#helper-scripts)** — Kimi Code CLI suite (Shell coaching, StrReplaceFile validation, swarm nudges, context guards)
+- **[`claude/`](claude/README.md)** — Claude Code CLI hooks (Edit validation, Bash coaching, re-read guard)
+
+---
+
+## Kimi Code CLI Hooks
+
+Kimi's inefficient patterns:
 - `ls -R` + `cat` instead of native `Grep`/`ReadFile`
 - `cd` loops because subagents don't inherit working directory
 - SSH sessions used as slow REPLs for remote file reading
-- Fragile `StrReplaceFile` for multi-hunk edits
+- Fragile `StrReplaceFile` exact-match edits that fail on any context drift
 
 This repo gives you:
 1. **`AGENTS.md`** — Project-level rules that guide the model toward efficient patterns
@@ -17,9 +28,38 @@ This repo gives you:
 3. **`hooks/strreplace-check.py`** — PreToolUse hook that validates `StrReplaceFile` `old` strings exist before the tool fires (blocks guaranteed-fail turns)
 4. **`hooks/batch-nudge.py`** — PostToolUse hook that detects sequential similar calls and emits real-time batching tips
 5. **`hooks/swarm-nudge.py`** — PostToolUse hook that detects complex manual work and nudges toward subagent swarm decomposition
-5. **`bin/apply-patch`** — Safe unified-diff application with built-in dry-run
-6. **`bin/make-patch`** — Converts `old`/`new` text pairs into valid unified diffs (no manual line-number math)
-7. **`bin/multi-read`** — Reads multiple files in one Shell call (bypasses N sequential ReadFile calls for small files)
+6. **`hooks/swarm-nudge-v2.py`** — Improved swarm nudge that tracks manual work *since last agent* (catches the "agent bait-and-switch" pattern where models dispatch agents early then grind manually)
+7. **`hooks/discovery-intercept.py`** — PreToolUse hook that intercepts ReadFile/Grep/Shell calls during long manual streaks and asks "should this be an agent?" *before* the call fires
+8. **`hooks/re-read-guard.py`** — PreToolUse hook that warns when the model re-reads an unchanged file this session
+9. **`hooks/line-offset-enforcer.py`** — PreToolUse hook that nudges toward `line_offset` on large file reads
+10. **`bin/apply-patch`** — Safe unified-diff application with built-in dry-run
+11. **`bin/make-patch`** — Converts `old`/`new` text pairs into valid unified diffs (no manual line-number math)
+12. **`bin/multi-read`** — Reads multiple files in one Shell call (bypasses N sequential ReadFile calls for small files)
+
+---
+
+## Claude Code CLI Hooks
+
+Claude Code has one architectural advantage Kimi lacks: **prompt caching**. The Anthropic API caches context across compaction events, so re-reading tokens after a compaction is cheap (cache hits). But session log analysis against Kimi+hooks reveals clear behavioral gaps that caching doesn't fix:
+
+| Pattern | Claude Code (observed) | Kimi + hooks |
+|---------|------------------------|--------------|
+| Standalone `cd` in Bash | 433/session | ~0 |
+| `cat`/`head`/`tail` in Bash | 271/session | ~0 |
+| Stale `Edit` calls (would fail) | unguarded | 37 blocked/session |
+| Re-reads after compaction | unguarded | guarded |
+
+Claude also has no native `Grep` or `Glob` tools (unlike Kimi), so Bash grep and find are legitimate and not flagged here.
+
+Three hooks live in [`claude/`](claude/README.md):
+
+1. **`claude/hooks/edit-check.py`** — PreToolUse hook on `Edit`. Reads the target file and blocks (exit 2) if `old_string` isn't found verbatim. Eliminates the stale-edit round-trip that fires after context compaction or parallel edits. *Port of `strreplace-check.py`.*
+
+2. **`claude/hooks/bash-check.py`** — PreToolUse hook on `Bash`. Tips `cat`/`head`/`tail` toward the native `Read` tool; warns on standalone `cd` calls whose directory change won't persist. Always exits 0 (non-blocking). *Port of `shell-check.py`, scoped to what Claude Code can actually redirect.*
+
+3. **`claude/hooks/re-read-guard.py`** — PreToolUse hook on `Read`. Tracks file path + mtime per session; warns when Claude is about to re-read an unchanged file it already loaded. Claude averages 37 context compactions per long session, making post-compaction re-reads a meaningful token sink. *Port of `re-read-guard.py`, adapted for Claude's `offset`/`limit` parameter names.*
+
+See [`claude/README.md`](claude/README.md) for installation instructions and a full diff table of Kimi vs Claude Code tool names and parameter differences.
 
 ## The Aha: In-Conversation Training Signals
 
@@ -31,11 +71,33 @@ Hooks are different. They're **dynamic feedback loops that shape behavior within
 
 - The model makes a sequential `ReadFile` call → the `batch-nudge` hook fires in the result → the model sees the tip → its *next* turn batches in parallel.
 - The model tries a stale `StrReplaceFile` → the `strreplace-check` hook blocks it → the model re-reads the file → learns to verify before editing.
-- The model grinds through 6 manual discovery calls → the `swarm-nudge` hook suggests explore agents → the model delegates → discovers faster.
+- The model grinds through 6 manual discovery calls → the `swarm-nudge-v2` hook suggests explore agents → the model delegates → discovers faster.
+- The model is about to fire a 5th sequential `ReadFile` during a manual streak → the `discovery-intercept` hook asks "should this be an agent?" → the model stops and delegates before wasting the turn.
 
 **Each tip is a gradient step.** Over the course of one session, the model encounters dozens of these micro-signals and adaptively shifts its strategy. The conversation *trains itself*.
 
 This is why we measure adoption rate (42% of tipped sessions show reduced Shell usage after the tip) and why the tips taper off as the model learns. The hooks aren't guardrails — they're a **tutoring layer**.
+
+### Why This Matters: Models Have No Cross-Session Memory
+
+An independent [analysis of exfiltrated system prompts](https://www.dbreunig.com/2026/02/10/system-prompts-define-the-agent-as-much-as-the-model.html) across six CLI coding agents (Claude Code, Cursor, Gemini CLI, Codex CLI, OpenHands, and Kimi CLI) found that **all of them need explicit system-prompt instructions to parallelize**:
+
+> "System prompts also repeatedly specify that tool calls should be parallel whenever possible. Claude should, 'maximize use of parallel tool calls where possible.' Cursor is sternly told, 'CRITICAL INSTRUCTION: involve all relevant tools concurrently… DEFAULT TO PARALLEL.' **Kimi adopts all-caps as well, stating, 'you are HIGHLY RECOMMENDED to make [tool calls] in parallel.'**
+>
+> This likely reflects the fact that most post-training reasoning and agentic examples are **serial** in nature… system prompts need to override this training."
+
+The system prompt *suggests* parallelism. Hooks **enforce** it with tactile feedback the model sees in-context.
+
+Additionally, comparisons with memory-first agents explicitly note that **Kimi CLI has no learning between sessions**:
+
+> **Kimi CLI** (Session-Based)
+> - Sessions are independent
+> - **No learning between sessions**
+> - Context = messages in the current session + `AGENTS.md`
+> - Relationship: Every conversation is like meeting a new contractor
+> — *[Letta Code comparison](https://github.com/letta-ai/letta-code)*
+
+This means **hooks are the only tutoring channel available.** There is no persistent memory, no fine-tuning, no "the model learned from last time." If we don't shape behavior within the session, it doesn't get shaped at all.
 
 ## Quick Start
 
@@ -51,7 +113,10 @@ cd kimi-code-optimizations
 ```bash
 # Copy hook scripts to ~/.kimi/hooks/
 mkdir -p ~/.kimi/hooks ~/.kimi/state
-cp hooks/shell-check.py hooks/strreplace-check.py hooks/batch-nudge.py ~/.kimi/hooks/
+cp hooks/shell-check.py hooks/strreplace-check.py hooks/batch-nudge.py \
+   hooks/swarm-nudge-v2.py hooks/discovery-intercept.py \
+   hooks/re-read-guard.py hooks/line-offset-enforcer.py \
+   hooks/parallel-agent-guard.py hooks/shell-output-truncator.py ~/.kimi/hooks/
 
 # Add to your ~/.kimi/config.toml
 cat >> ~/.kimi/config.toml << 'EOF'
@@ -69,9 +134,45 @@ command = "python3 /home/evan/.kimi/hooks/strreplace-check.py"
 timeout = 3
 
 [[hooks]]
+event = "PreToolUse"
+matcher = "ReadFile|Grep|Shell"
+command = "python3 /home/evan/.kimi/hooks/discovery-intercept.py"
+timeout = 2
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "ReadFile"
+command = "python3 /home/evan/.kimi/hooks/re-read-guard.py"
+timeout = 3
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "ReadFile"
+command = "python3 /home/evan/.kimi/hooks/line-offset-enforcer.py"
+timeout = 2
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "Agent"
+command = "python3 /home/evan/.kimi/hooks/parallel-agent-guard.py"
+timeout = 2
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "Shell"
+command = "python3 /home/evan/.kimi/hooks/shell-output-truncator.py"
+timeout = 2
+
+[[hooks]]
 event = "PostToolUse"
 matcher = ".*"
 command = "python3 /home/evan/.kimi/hooks/batch-nudge.py"
+timeout = 2
+
+[[hooks]]
+event = "PostToolUse"
+matcher = ".*"
+command = "python3 /home/evan/.kimi/hooks/swarm-nudge-v2.py"
 timeout = 2
 EOF
 
@@ -155,7 +256,7 @@ A PostToolUse hook that maintains a sliding window of recent tool calls per sess
 
 This provides tactile feedback so the model learns to batch in real time.
 
-### Hook: `swarm-nudge.py`
+### Hook: `swarm-nudge.py` (v1)
 
 A PostToolUse hook that tracks overall session complexity and nudges toward subagent decomposition:
 - **Detects** 6+ manual discovery calls (`ReadFile`/`Grep`) with no agents → suggests parallel `explore` agents
@@ -166,6 +267,116 @@ A PostToolUse hook that tracks overall session complexity and nudges toward suba
 
 This trains the model to think *swarm-first*: before doing work manually, ask "Can I delegate this to parallel subagents?"
 
+### Hook: `swarm-nudge-v2.py` (Recommended)
+
+An improved PostToolUse hook that fixes v1's biggest blind spot: **models that dispatch agents early, then fall back to manual work.**
+
+**Why v1 fails:** In today's session logs, a model dispatched 4 background explore agents initially (good!), then did **72 sequential manual calls** afterward. v1 never fired because `agent_calls > 0`. The ratio was 15:1 manual-to-agent.
+
+**What v2 tracks:**
+- **Manual calls since last agent** — tips after 8+ manual calls in a row, even if agents were used earlier
+- **Manual:agent ratio** — tips when ratio exceeds 5:1
+- **Repeatable tips** — with cooldowns, so the model gets reminded throughout the session
+- **Lowered thresholds** — catches waste earlier (4 calls instead of 6)
+
+**State** is stored in `~/.kimi/state/swarm-tracker-v2-<session_id>.json`
+
+### Hook: `discovery-intercept.py` (Aggressive)
+
+A **PreToolUse** hook (not PostToolUse) that intercepts `ReadFile`/`Grep`/`Shell` calls **before they execute** once the model is in a manual work streak of 4+ calls.
+
+Unlike PostToolUse hooks that say "you just wasted a turn," this asks "are you sure you want to do this manually?" **before** the turn is spent. Example output:
+
+```
+INTERCEPT: You're about to ReadFile 'src/auth.py' during a 6-call manual work streak.
+Could this (and related files) be handled by a parallel explore/coder agent instead?
+```
+
+This is the most aggressive nudge in the toolkit. Use it if the model consistently falls back to manual discovery after initial agent usage.
+
+**State** is stored in `~/.kimi/state/discovery-intercept-<session_id>.json`
+
+### Hook: `re-read-guard.py` (Context Saver)
+
+A **PreToolUse** hook that tracks every `ReadFile` call per session and warns when the model is about to re-read a file that hasn't changed.
+
+**Why it matters:** After context compaction, the model forgets file contents. It re-reads files it already saw, burning thousands of tokens on unchanged data. In long sessions, re-reads can account for 15-30% of token waste.
+
+**What it tracks:**
+- **File path + mtime** — detects if the file changed since last read
+- **line_offset + n_lines** — allows legitimate re-reads of different sections
+- **Session-scoped state** — stored in `~/.kimi/state/file-reads-<session_id>.json`
+
+**Example output:**
+```
+⚠️ CONTEXT GUARD: You already read 'src/auth.py' earlier in this session
+(lines full file). The file has not changed since then. Re-reading it wastes
+~2,400 tokens of context. Only re-read if you need a *different* section
+(use line_offset).
+```
+
+Always exits 0 (non-blocking). The model sees the warning and can choose to skip the re-read or proceed if it truly needs the data.
+
+### Hook: `line-offset-enforcer.py` (Context Saver)
+
+A **PreToolUse** hook that detects `ReadFile` calls without `line_offset` on large files and nudges the model toward targeted reads.
+
+**Why it matters:** Reading a 600-line file without `line_offset` burns ~15k tokens. After `Grep` finds a symbol on line 347, the model often reads the entire file instead of the relevant window.
+
+**Mechanism:**
+- Runs `wc -l` on the target file with a 1.5s timeout
+- If the file is >250 lines and `line_offset` is missing → emit warning
+- **Fail-open** on I/O errors or timeouts
+
+**Example output:**
+```
+⚠️ CONTEXT GUARD: 'src/main.py' is 612 lines (~15,300 tokens). Reading the
+entire file without line_offset wastes context. If you only need a section,
+use ReadFile(path='src/main.py', line_offset=..., n_lines=...). If you truly
+need the full file, proceed.
+```
+
+### Hook: `parallel-agent-guard.py` (Speed + Context)
+
+A **PreToolUse** hook that intercepts sequential `Agent` dispatch and nudges toward parallel background execution.
+
+**Why it matters:** Models often dispatch agents one at a time (`run_in_background=false` or missing), then wait for each to finish. This wastes wall-clock time and keeps both agent prompts in parent context longer than necessary.
+
+**Mechanism:**
+- Tracks the last tool call type per session
+- If the current call is `Agent` and the previous call was also `Agent` without `run_in_background=true` → emit warning
+- Allows background agents to pass through silently
+
+**Example output:**
+```
+⚠️ PARALLEL GUARD: You're about to dispatch an agent sequentially.
+If this agent is independent of the previous one, set run_in_background=true
+and dispatch them together in the same turn.
+```
+
+**State** is stored in `~/.kimi/state/parallel-agent-guard-<session_id>.json`
+
+### Hook: `shell-output-truncator.py` (Context Saver)
+
+A **PreToolUse** hook that detects Shell commands likely to produce **unbounded output**.
+
+**Why it matters:** `shell-check.py` guards against using Shell for the *wrong job* (file reading, discovery). This hook guards against using Shell for the *right job* but with *wrong flags* — commands that dump thousands of lines of unstructured text into context.
+
+**Detects:**
+- `git log` without `-n` or `--oneline`
+- `journalctl` without `--since` or `-n`
+- `docker logs` without `--tail`
+- `find` without `-maxdepth`
+- `pip list`, `npm ls`, `ps aux`, `dmesg`, `kubectl logs`
+- `ls -R` (recursive listing)
+
+**Example output:**
+```
+⚠️ OUTPUT GUARD: This Shell command may produce unbounded output:
+  • git log without -n or --oneline can produce thousands of lines.
+    Use git log --oneline -n 20 to limit output.
+Unbounded command output silently burns context. Add filters before proceeding.
+```
 
 ### `apply-patch` (`bin/apply-patch`)
 
@@ -224,15 +435,20 @@ Shell(command="multi-read README.md ARTICLE.md AGENTS.md config.toml.example")
 
 ## Known Bugs & Patches
 
-### Background Subagents Bypass PreToolUse Hooks (Fixed)
+### Background Subagents Bypass PreToolUse Hooks (Still needed in 1.40)
 
-**Bug:** `BackgroundAgentRunner._run_core()` in Kimi CLI does **not** propagate the parent's `HookEngine` to the subagent soul, while the foreground runner does. This means background subagents (launched with `run_in_background=True`) completely bypass all PreToolUse hooks — including `shell-check.py`.
+**Bug:** `BackgroundAgentRunner._run_core()` in Kimi CLI does **not** propagate the parent's `HookEngine` to the subagent soul, while the foreground runner does. This means background subagents (launched with `run_in_background=True`) completely bypass all PreToolUse hooks — including `shell-check.py` and `discovery-intercept.py`.
 
-**Impact:** ~60% of blocked-pattern Shell calls in our quantitative analysis were slipping through via background subagents.
+**Impact:** ~60% of blocked-pattern Shell calls in our quantitative analysis were slipping through via background subagents. This is especially bad for swarm-heavy workflows where most work runs in background agents.
 
 **Patch:** `patches/background-subagent-hook-engine.patch`
 
-Apply to your Kimi CLI installation:
+Quick apply:
+```bash
+./scripts/apply-background-patch.sh
+```
+
+Or manual:
 ```bash
 # Find your kimi-cli install path
 KIMI_CLI=$(python3 -c "import kimi_cli; print(kimi_cli.__path__[0])")
@@ -264,28 +480,64 @@ If Kimi adds native `apply_patch` in the future, this workaround becomes obsolet
 
 ```
 kimi-code-optimizations/
-├── AGENTS.md                 # Project-level agent rules
-├── README.md                 # This file
-├── LICENSE                   # MIT
-├── config.toml.example       # Hook config snippet
+├── AGENTS.md                   # Project-level agent rules (Kimi)
+├── README.md                   # This file
+├── LICENSE                     # MIT
+├── config.toml.example         # Kimi hook config snippet
 ├── bin/
-│   ├── apply-patch           # Safe patch application helper
-│   ├── make-patch            # Old/new → unified diff converter
-│   └── multi-read            # Read multiple files in one Shell call
-└── hooks/
-    ├── shell-check.py        # PreToolUse hook: coach cat/grep/cd
-    ├── shell-check-blocking.py # PreToolUse hook: block cat/grep/cd (aggressive)
-    ├── strreplace-check.py   # PreToolUse hook: validate old string exists
-    └── batch-nudge.py        # PostToolUse hook: detect sequential calls
+│   ├── apply-patch             # Safe patch application helper
+│   ├── make-patch              # Old/new → unified diff converter
+│   └── multi-read              # Read multiple files in one Shell call
+├── hooks/                      # Kimi Code CLI hooks
+│   ├── shell-check.py          # PreToolUse: coach cat/grep/cd → native tools
+│   ├── shell-check-blocking.py # PreToolUse: block cat/grep/cd (aggressive)
+│   ├── strreplace-check.py     # PreToolUse: validate old string exists
+│   ├── batch-nudge.py          # PostToolUse: detect sequential calls
+│   ├── swarm-nudge.py          # PostToolUse: v1 total-count swarm detection
+│   ├── swarm-nudge-v2.py       # PostToolUse: v2 streak-aware swarm detection
+│   ├── discovery-intercept.py  # PreToolUse: intercept manual discovery streaks
+│   ├── re-read-guard.py        # PreToolUse: warn on re-reading unchanged files
+│   └── line-offset-enforcer.py # PreToolUse: nudge toward line_offset on large files
+└── claude/                     # Claude Code CLI hooks
+    ├── README.md               # Claude-specific installation and diff table
+    ├── settings.json.example   # Hook config snippet for ~/.claude/settings.json
+    └── hooks/
+        ├── edit-check.py       # PreToolUse: validate Edit old_string exists
+        ├── bash-check.py       # PreToolUse: coach cat/head/tail → Read tool
+        └── re-read-guard.py    # PreToolUse: warn on re-reading unchanged files
 ```
 
 ## Requirements
 
+**Kimi Code CLI:**
 - Python 3.10+
 - GNU `patch` 2.7+ (usually preinstalled on Linux/macOS)
-- Kimi Code CLI 1.39+
+- Kimi Code CLI 1.39+ (tested through 1.40.0)
+- Hooks load at session start — start a **new** `kimi` conversation after installing
 
-> **Note:** The hooks load at session start. Start a **new** `kimi` conversation after installing them.
+**Claude Code CLI:**
+- Python 3.10+
+- Claude Code CLI 2.x+
+- Hooks load at session start — restart `claude` after modifying `settings.json`
+
+## Optimal Config for Swarm-Heavy Workflows
+
+If you're adopting the swarm-first approach, tune these `~/.kimi/config.toml` settings:
+
+```toml
+[loop_control]
+# Allow long-running agent turns (default was 500, raised to 1000 in 1.40)
+max_steps_per_turn = 1000
+
+[background]
+# Run more background agents in parallel (default is 10)
+max_running_tasks = 15
+
+# Don't kill slow agents prematurely (default is 1h)
+agent_task_timeout_s = 7200
+```
+
+Higher `max_steps_per_turn` is critical for swarm workflows: a parent agent that dispatches 10 background coders, then polls them, then integrates results, can easily burn 200+ steps in one turn.
 
 ## License
 
