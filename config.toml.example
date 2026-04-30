@@ -1,6 +1,8 @@
 # Example ~/.kimi/config.toml snippet
 # Add these [[hooks]] sections to your existing config.toml
 
+# --- PreToolUse hooks (intercept BEFORE the call) ---
+
 [[hooks]]
 event = "PreToolUse"
 matcher = "Shell"
@@ -13,8 +15,59 @@ matcher = "StrReplaceFile"
 command = "python3 /home/evan/.kimi/hooks/strreplace-check.py"
 timeout = 3
 
+# NEW: Intercept manual discovery during long streaks and suggest agents
+[[hooks]]
+event = "PreToolUse"
+matcher = "ReadFile|Grep|Shell"
+command = "python3 /home/evan/.kimi/hooks/discovery-intercept.py"
+timeout = 2
+
+# NEW: Guard against re-reading unchanged files (saves context after compaction)
+[[hooks]]
+event = "PreToolUse"
+matcher = "ReadFile"
+command = "python3 /home/evan/.kimi/hooks/re-read-guard.py"
+timeout = 3
+
+# NEW: Nudge toward line_offset on large files (saves context)
+[[hooks]]
+event = "PreToolUse"
+matcher = "ReadFile"
+command = "python3 /home/evan/.kimi/hooks/line-offset-enforcer.py"
+timeout = 2
+
+# NEW: Guard against sequential agent dispatch (parallelize instead)
+[[hooks]]
+event = "PreToolUse"
+matcher = "Agent"
+command = "python3 /home/evan/.kimi/hooks/parallel-agent-guard.py"
+timeout = 2
+
+# NEW: Detect Shell commands with unbounded output
+[[hooks]]
+event = "PreToolUse"
+matcher = "Shell"
+command = "python3 /home/evan/.kimi/hooks/shell-output-truncator.py"
+timeout = 2
+
+# --- PostToolUse hooks (react AFTER the call) ---
+
 [[hooks]]
 event = "PostToolUse"
 matcher = ".*"
 command = "python3 /home/evan/.kimi/hooks/batch-nudge.py"
 timeout = 2
+
+# NEW: Improved swarm nudge (v2) — tracks manual work since last agent
+[[hooks]]
+event = "PostToolUse"
+matcher = ".*"
+command = "python3 /home/evan/.kimi/hooks/swarm-nudge-v2.py"
+timeout = 2
+
+# (Optional) Original swarm nudge — kept for comparison or if you prefer total-count logic
+# [[hooks]]
+# event = "PostToolUse"
+# matcher = ".*"
+# command = "python3 /home/evan/.kimi/hooks/swarm-nudge.py"
+# timeout = 2
