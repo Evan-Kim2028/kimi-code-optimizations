@@ -138,18 +138,37 @@ Hooks load at session start. Restart Claude Code for them to take effect.
 | Config format | `~/.kimi/config.toml` `[[hooks]]` | `~/.claude/settings.json` `hooks.PreToolUse` |
 | State dir | `~/.kimi/state/` | `~/.claude/state/` |
 | Hook stdin `cwd` | Provided by runtime | Not provided — use absolute paths |
-| Non-blocking tips | `stderr` (shown in tool result) | `stdout` (shown to Claude as context) |
+| Non-blocking tips | `stderr` (shown in tool result) | JSON `hookSpecificOutput.additionalContext` on stdout (plain stdout is silently dropped) |
 
-## Empirical Note: Hooks Run Inside Subagents but Stdout Is Dropped
+## Empirical Note: Hook Output Format Matters (Plain `print` Is Silently Dropped)
 
-Verified by canary logging in April 2026: when a parent dispatches an `Agent`, the subagent's `Bash` and `Read` tool calls **do** trigger the parent's PreToolUse hooks (separate PID, parent's `session_id`, shared state file). However, the subagent's transcript does **not** receive the hook's stdout — coaching tips like `💡 use Read instead of cat` are silently discarded.
+Verified by canary logging on April 29 2026: a PreToolUse hook that prints plain text to stdout will execute, exit cleanly, write its state file — and produce **zero observable effect on Claude's behavior**, because the parent never sees the tip text. The kimi-style `print(f"💡 ...")` pattern that works on Kimi CLI is silently swallowed by Claude Code's harness.
+
+The fix is to emit a structured JSON envelope on stdout:
+
+```python
+print(json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": "💡 your tip here",
+    }
+}))
+```
+
+When formatted this way, the tip appears to the model as a `<system-reminder>` block right before the tool result — exactly the channel coaching hooks need. All five hooks in this directory use this format.
+
+**If you migrated an earlier version of these hooks (or any kimi-style hook), update the output format.** The plain-`print` version of `bash-check`, `re-read-guard`, etc., were technically running for days on at least one install but had zero behavioral impact. Only `edit-check` worked, because it relies on `exit 2` + stderr (which still functions as a blocking error).
+
+## Empirical Note: Hooks Run Inside Subagents but Output Is Dropped
+
+Same canary verification: when a parent dispatches an `Agent`, the subagent's `Bash` and `Read` tool calls **do** trigger PreToolUse hooks (separate PID, parent's `session_id`, shared state file). But the subagent transcript does **not** receive `additionalContext` from those hook runs. The hook fires, the state mutates, the tip vanishes.
 
 What this means for hook design on Claude Code:
-- **Coach the parent, not the subagent.** Hooks that depend on the model seeing a stdout tip (`bash-check`, `re-read-guard` warnings) only influence the parent's behavior. The subagent is on its own — though Claude Code's *native* read-dedup does fire inside subagents and provides some coverage.
-- **State-mutating hooks still work cross-context** because they share `~/.claude/state/`. `re-read-guard` writes the subagent's reads into the parent's state file, so the parent sees the dedup on its next read of the same file.
-- **The new `parallel-agent-guard` and `cheap-subagent-router` are unaffected** — they trigger on the parent's `Agent` dispatch, where the parent does see hook stdout.
+- **Coach the parent, not the subagent.** Tips only influence the parent's behavior. The subagent is on its own — though Claude Code's *native* read-dedup does fire inside subagents and provides some coverage.
+- **State-mutating hooks still work cross-context** because they share `~/.claude/state/`. `re-read-guard` writes the subagent's reads into the parent's state file, so the parent sees the dedup on its next read.
+- **`parallel-agent-guard` and `cheap-subagent-router` are unaffected** — they trigger on the parent's `Agent` dispatch, which is the parent's own tool call.
 
-If you find a way to get hook stdout into subagent transcripts (PostToolUse + tool_response injection, perhaps), open a PR.
+If you find a way to inject context into subagent transcripts (PostToolUse + tool_response shaping, perhaps), open a PR.
 
 ## What's Not Ported
 

@@ -51,12 +51,18 @@ state_path.write_text(json.dumps({
 # one wasn't backgrounded — strong signal of serial dispatch instead of
 # sending both Agent tool_use blocks in the same assistant message.
 if prev_was_agent and prev_age < 60 and not prev_bg:
-    print(
+    msg = (
         "PARALLEL GUARD: the previous tool call was also an Agent dispatch. "
         "If these subagents are independent, send them in a single assistant "
         "message with multiple Agent tool_use blocks (and set "
         "run_in_background=true on each) so they run concurrently. "
         "Sequential dispatch wastes wall-clock time and parent context."
     )
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": msg,
+        }
+    }))
 
 sys.exit(0)

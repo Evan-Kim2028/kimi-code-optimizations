@@ -9,12 +9,14 @@ This hook does NOT block. It emits a coaching tip when the dispatch looks
 like it would be served better by a smaller model — or stays silent when
 Opus is the right choice.
 
+Tips are emitted as JSON hookSpecificOutput.additionalContext on stdout
+so Claude Code injects them into the model's context.
+
 Triage:
   - `model` already set         → silent (respect explicit choice)
   - Explore subagent OR short
     prompt with discovery verbs → suggest model="haiku"
-  - Implementation/synthesis
-    (edit, write, refactor)     → suggest model="sonnet"
+  - Implementation/synthesis    → suggest model="sonnet"
   - Review / architecture /
     security / design audit     → silent (let Opus default stand)
   - Default                     → suggest model="sonnet" as the middle path
@@ -24,6 +26,16 @@ The point is to make Opus *consciously chosen*, not *accidentally inherited*.
 import json
 import re
 import sys
+
+
+def emit(msg: str) -> None:
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": msg,
+        }
+    }))
+
 
 try:
     data = json.load(sys.stdin)
@@ -64,7 +76,7 @@ is_heavy = bool(re.search(HEAVY_VERBS, combined)) or "code-reviewer" in subagent
 is_impl = bool(re.search(IMPL_VERBS, combined))
 
 if is_discovery and not is_heavy:
-    print(
+    emit(
         'COST ROUTER: this looks like a discovery/lookup task. Consider passing '
         '`model: "haiku"` to the Agent tool — Haiku 4.5 is ~5-10x cheaper than '
         "Opus and handles read-only search, file location, and grep-style work "
@@ -74,7 +86,7 @@ elif is_heavy:
     # Silent: Opus is the right default for review/architecture/security.
     pass
 elif is_impl:
-    print(
+    emit(
         'COST ROUTER: this looks like a focused implementation task. Consider '
         '`model: "sonnet"` — Sonnet 4.6 is meaningfully cheaper than Opus and '
         "strong at scoped code edits. Promote to Opus only if the task needs "
@@ -82,7 +94,7 @@ elif is_impl:
     )
 else:
     # Generic dispatch — nudge toward Sonnet as the middle path.
-    print(
+    emit(
         'COST ROUTER: model is unset, so this subagent will inherit the parent '
         "model (Opus). If the task is well-scoped, pass "
         '`model: "sonnet"` (or `"haiku"` for pure discovery). Choose Opus '

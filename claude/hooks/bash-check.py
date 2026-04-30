@@ -8,20 +8,9 @@ Key redirections:
   cat/head/tail  →  Read tool (structured output, line numbers, handles large files)
   standalone cd  →  warn: state doesn't persist across Bash calls
 
-Always exits 0 (non-blocking). Tips are printed to stdout and shown to Claude
-as additional context before the tool executes.
-
-Add to ~/.claude/settings.json:
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "python3 /path/to/hooks/bash-check.py"}]
-      }
-    ]
-  }
-}
+Always exits 0 (non-blocking). Tips are emitted as JSON
+hookSpecificOutput.additionalContext on stdout — Claude Code injects this
+into the model's context before the tool executes.
 """
 import json
 import re
@@ -30,9 +19,11 @@ import sys
 data = json.load(sys.stdin)
 cmd = data.get("tool_input", {}).get("command", "")
 
+tips: list[str] = []
+
 
 def tip(msg: str) -> None:
-    print(f"💡 {msg}")
+    tips.append(f"💡 {msg}")
 
 
 # File reading: cat, head, tail → Read tool
@@ -63,5 +54,13 @@ if re.match(r"^cd\s+\S", stripped) and not re.search(r"&&|;|\|", stripped):
         "Chain your actual command inline: 'cd /path && your-command', "
         "or use absolute paths directly."
     )
+
+if tips:
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": "\n".join(tips),
+        }
+    }))
 
 sys.exit(0)

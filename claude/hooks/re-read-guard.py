@@ -106,12 +106,18 @@ def main():
                         same_section = True
 
             if same_section:
-                print(
+                msg = (
                     f"⚠️ CONTEXT GUARD: You already read '{file_path_str}' earlier this session "
                     f"({'lines ' + str(prev_offset) if prev_offset else 'full file'}). "
                     f"The file has not changed (~{size // 4:,} tokens). "
                     f"Skip the re-read unless you need a different section (use offset)."
                 )
+                print(json.dumps({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "additionalContext": msg,
+                    }
+                }))
                 sys.exit(0)
 
     state[key] = {"mtime": mtime, "size": size, "offset": offset, "limit": limit}
