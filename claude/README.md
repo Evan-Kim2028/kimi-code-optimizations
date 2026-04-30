@@ -15,6 +15,8 @@ A direct session log comparison between Claude Code and Kimi Code CLI (same work
 
 Claude Code already has one architectural advantage Kimi lacks: **prompt caching** (982M cache-read tokens in a typical long session). These hooks address the behavioral gaps that caching can't fix.
 
+> **Note (April 2026):** The original `bash-check.py` hook (cat/head/tail → Read tool nudges) was **removed** after one full day of production use. Per-call eval across 220 sessions: 327 fires, ~79% of which were false positives — the regex matched `\b(cat|head|tail)\b` whether the verb was reading a file or consuming piped output (`grep ... | head -50`, `gh pr view ... | tail -1`). The "fix" suggestion (`Read(file_path='-50;')`) was nonsense in those cases and the noise drowned out the legitimate hits. The hook would need a real pipe/flag-detector before it's worth re-adding. See "Empirical Note: When a Hook Earns Removal" below.
+
 ## Hooks
 
 ### `edit-check.py` — Edit Validation (Blocking)
@@ -24,18 +26,6 @@ Claude Code already has one architectural advantage Kimi lacks: **prompt caching
 **What it does:** Reads the target file before the Edit executes. If `old_string` isn't found verbatim, blocks (exit 2) with a clear error.
 
 **Port of:** `strreplace-check.py` from the Kimi suite. Adapted for Claude Code's `Edit` tool (`file_path` + `old_string` instead of `path` + `edit.old`).
-
----
-
-### `bash-check.py` — Bash Usage Coach (Non-blocking)
-
-**Problem:** Claude Code uses Bash for `cat`, `head`, `tail`, and standalone `cd` — all cases where the native `Read` tool or inline chaining would be faster and more context-efficient.
-
-**What it does:** Detects those patterns and emits coaching tips (stdout → shown to Claude as context before the tool runs). Always exits 0.
-
-**Claude-specific note:** Unlike the Kimi version, this does **not** flag `grep`, `find`, or `ls` — Claude Code has no native `Grep` or `Glob` tools, so Bash is the right choice for those.
-
-**Port of:** `shell-check.py` from the Kimi suite. Tool name changed (`Shell` → `Bash`), redirections adjusted for Claude Code's available native tools.
 
 ---
 
@@ -55,7 +45,11 @@ Claude Code already has one architectural advantage Kimi lacks: **prompt caching
 
 **Problem:** In a sample of 15 long Claude Code sessions, **817 of 817 `Agent` dispatches were solo turns** — the model never sent multiple `Agent` tool_use blocks in a single assistant message, even when tasks were independent. Sequential dispatch wastes wall-clock time and keeps each subagent's prompt in the parent context longer than necessary.
 
-**What it does:** Tracks the last tool call per session in `~/.claude/state/`. When the previous call was an `Agent` (not backgrounded) and the current call is also an `Agent` within ~60 seconds, emits a tip recommending parallel batching: send both `Agent` blocks in the same assistant message and set `run_in_background=true` on each.
+**What it does (v2 — fires at plan time):** Inspects the FIRST `Agent` dispatch's prompt for plan-shape signals — numbered/step-shaped plans, sequencer phrases (`first ... then`, `after that`), multi-target verbs (`investigate X and Y`), or three-plus parallel bullet points. When detected, emits a directive nudge before the dispatch runs: *"if these steps are independent, cancel this dispatch and re-issue all of them as a parallel batch with `run_in_background=true`."* Suppresses the nudge for clearly-heavy single-task work (threat-modeling, deep-dive, full audit). Fires once per session for plan signals.
+
+**Sequential backstop:** If the previous Agent call was foreground and <60s old, the hook still emits a separate "you should have batched these" tip — the original v1 behavior, kept as a fallback.
+
+**Why the rewrite:** v1 (a soft tip on the second sequential dispatch) ran for one full day and produced **0 behavioral change** — the agent-blocks-per-message histogram stayed `{1: N}` across 22 dispatches and 21 hook fires. The fix is to nudge at *plan time* (before the first call) when the model is still choosing how to structure the work, with copy-pasteable framing rather than advisory framing.
 
 **Port of:** `parallel-agent-guard.py` from the Kimi suite. The Kimi README originally said this hook didn't map cleanly to Claude Code; session-log analysis showed the opposite — the dispatch problem is even more pronounced.
 
@@ -85,7 +79,7 @@ The point is to make Opus a *conscious choice*, not an *inherited default*. The 
 
 ```bash
 mkdir -p ~/.claude/hooks ~/.claude/state
-cp hooks/edit-check.py hooks/bash-check.py hooks/re-read-guard.py \
+cp hooks/edit-check.py hooks/re-read-guard.py \
    hooks/parallel-agent-guard.py hooks/cheap-subagent-router.py ~/.claude/hooks/
 ```
 
@@ -100,10 +94,6 @@ Merge the `PreToolUse` block from `settings.json.example` into your existing `~/
       {
         "matcher": "Edit",
         "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/edit-check.py"}]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/bash-check.py"}]
       },
       {
         "matcher": "Read",
@@ -176,3 +166,24 @@ If you find a way to inject context into subagent transcripts (PostToolUse + too
 - **`batch-nudge`** — Claude Code's system prompt already pushes parallel tool calls. The bigger lever is `parallel-agent-guard` (now ported) which targets the *Agent dispatch* pattern specifically.
 - **`line-offset-enforcer`** — Claude Code's `Read` tool uses `limit` not `n_lines`, but the pattern is the same. Could be ported if large-file reads become a measured problem.
 - **`shell-check-blocking`** — The blocking variant makes sense for Kimi because it has native alternatives for `grep`/`find`. For Claude Code, blocking Bash grep would leave the model with no search path.
+
+## Empirical Note: When a Hook Earns Removal
+
+`bash-check.py` was removed on April 30 2026 after one full production day with all five hooks active. Per-hook firing tally across 220 sessions:
+
+| Hook | Fires | Verdict |
+|---|---|---|
+| `cheap-subagent-router` | 19 → **15/22 (68%) of `Agent` calls set explicit `model`** (9 haiku, 6 sonnet) vs. prior 0% baseline | **Clear win — direct cost saving.** |
+| `edit-check` | 3 blocks | **Small but real win** — 3 saved round-trips, no false positives. |
+| `re-read-guard` | 18 warnings | **Plausibly useful**, hard to prove without a counterfactual. No false-positive surface. |
+| `parallel-agent-guard` (v1) | 21 fires | **No behavioral effect** — agent-blocks-per-message stayed `{1: 22}`. Rewritten as v2 (plan-time nudge). |
+| `bash-check` | 211 tip fires (115 "start" + 73 "end" + 23 "files") | **Removed.** ~79% false-positive rate from `\b(cat\|head\|tail)\b` matching piped use. Suggested fixes (`Read(file_path='-50;')`) were nonsense. |
+
+The lesson: **measure each hook by behavioral delta, not by activity.** A hook that fires 211 times and produces noise is worse than one that never runs. A hook that fires 19 times and shifts 68% of subagent dispatches off Opus is doing real work. The eval bar should be "did the model's downstream behavior change," not "did the hook trigger."
+
+For `bash-check` to earn its way back in, the regex needs to detect:
+- Pipe input (`|` precedes the verb) → skip
+- Flag-only invocation (first non-flag arg starts with `-` or is numeric) → skip
+- Real filename argument (path-like or matches `.*\.\w+$`) → fire
+
+Until that exists, the hook is net negative.

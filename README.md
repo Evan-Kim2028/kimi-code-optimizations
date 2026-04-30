@@ -53,17 +53,17 @@ Claude Code has one architectural advantage Kimi lacks: **prompt caching**. The 
 
 Claude also has no native `Grep` or `Glob` tools (unlike Kimi), so Bash grep and find are legitimate and not flagged here.
 
-Five hooks live in [`claude/`](claude/README.md):
+Four hooks live in [`claude/`](claude/README.md):
 
 1. **`claude/hooks/edit-check.py`** — PreToolUse on `Edit`. Reads the target file and blocks (exit 2) if `old_string` isn't found verbatim. Eliminates the stale-edit round-trip that fires after context compaction or parallel edits. *Port of `strreplace-check.py`.*
 
-2. **`claude/hooks/bash-check.py`** — PreToolUse on `Bash`. Tips `cat`/`head`/`tail` toward the native `Read` tool; warns on standalone `cd` calls whose directory change won't persist. *Port of `shell-check.py`, scoped to what Claude Code can actually redirect.*
+2. **`claude/hooks/re-read-guard.py`** — PreToolUse on `Read`. Tracks file path + mtime per session; warns when Claude is about to re-read an unchanged file it already loaded. *Port of `re-read-guard.py`, adapted for Claude's `offset`/`limit` parameter names.*
 
-3. **`claude/hooks/re-read-guard.py`** — PreToolUse on `Read`. Tracks file path + mtime per session; warns when Claude is about to re-read an unchanged file it already loaded. *Port of `re-read-guard.py`, adapted for Claude's `offset`/`limit` parameter names.*
+3. **`claude/hooks/parallel-agent-guard.py`** — PreToolUse on `Agent`. In a sample of 15 long sessions, **817/817 `Agent` dispatches were solo turns** (zero parallel batching). v2 of this hook (April 2026) inspects the *first* dispatch's prompt for plan-shape signals — numbered steps, sequencer phrases (`first ... then`), multi-target verbs — and emits a directive nudge at plan time recommending multiple `Agent` blocks in a single assistant message with `run_in_background=true`. v1 fired on the *second* sequential dispatch and produced zero behavioral change in production; v2 moves the nudge upstream to where the planning happens. *Evolved from `parallel-agent-guard.py`.*
 
-4. **`claude/hooks/parallel-agent-guard.py`** — PreToolUse on `Agent`. In a sample of 15 long sessions, **817/817 `Agent` dispatches were solo turns** (zero parallel batching). This hook tips the model when consecutive `Agent` calls happen within 60s, recommending multiple `Agent` blocks in a single assistant message with `run_in_background=true`. *Port of `parallel-agent-guard.py`.*
+4. **`claude/hooks/cheap-subagent-router.py`** — PreToolUse on `Agent`. Claude Code's `Agent` tool accepts `model: "haiku" | "sonnet" | "opus"`; when omitted the subagent inherits the parent (often Opus). This hook triages the dispatch and suggests Haiku for discovery, Sonnet for scoped implementation, and stays silent on review/architecture/security tasks where Opus is the right default. Makes Opus a *conscious choice*, not an *inherited default*. Production data after one full day: 68% of subagent dispatches set an explicit model (vs 0% baseline). **Claude-Code-specific** — Kimi has no equivalent.
 
-5. **`claude/hooks/cheap-subagent-router.py`** — PreToolUse on `Agent`. Claude Code's `Agent` tool accepts `model: "haiku" | "sonnet" | "opus"`; when omitted the subagent inherits the parent (often Opus). This hook triages the dispatch and suggests Haiku for discovery, Sonnet for scoped implementation, and stays silent on review/architecture/security tasks where Opus is the right default. Makes Opus a *conscious choice*, not an *inherited default*. **Claude-Code-specific** — Kimi has no equivalent.
+> A fifth hook (`bash-check.py`, cat/head/tail → Read tool nudge) shipped in the original release and was **removed** on April 30 2026 after a per-hook eval — ~79% false-positive rate on piped use. See [`claude/README.md`](claude/README.md#empirical-note-when-a-hook-earns-removal) for the data.
 
 See [`claude/README.md`](claude/README.md) for installation instructions, a diff table of Kimi vs Claude Code tool names, and an empirical note on hook-stdout propagation into subagents (it doesn't — coach the parent).
 
@@ -509,9 +509,8 @@ kimi-code-optimizations/
     ├── settings.json.example        # Hook config snippet for ~/.claude/settings.json
     └── hooks/
         ├── edit-check.py            # PreToolUse: validate Edit old_string exists
-        ├── bash-check.py            # PreToolUse: coach cat/head/tail → Read tool
         ├── re-read-guard.py         # PreToolUse: warn on re-reading unchanged files
-        ├── parallel-agent-guard.py  # PreToolUse: nudge sequential Agent → parallel
+        ├── parallel-agent-guard.py  # PreToolUse: plan-time nudge toward parallel Agent batching
         └── cheap-subagent-router.py # PreToolUse: triage subagent model (haiku/sonnet/opus)
 ```
 
