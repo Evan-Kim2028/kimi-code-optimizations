@@ -31,6 +31,15 @@
             "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/cheap-subagent-router.py"
           }
         ]
+      },
+      {
+        "matcher": "WebFetch|WebSearch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/web-tool-redirect.py"
+          }
+        ]
       }
     ]
   }

@@ -29,8 +29,18 @@ The point is to make Opus and high effort *consciously chosen*, not
 *accidentally inherited*.
 """
 import json
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _provider import detect_provider
+
+# The haiku/sonnet/opus tiers and `effort` param are Anthropic-specific.
+# Z.AI, Moonshot, and other Anthropic-compatible providers serve a single
+# model id and ignore (or 404 on) tier names. Skip the coaching tip there.
+if detect_provider() != "anthropic":
+    sys.exit(0)
 
 
 def emit(msg: str) -> None:

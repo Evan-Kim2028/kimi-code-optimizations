@@ -55,9 +55,40 @@ Claude Code already has one architectural advantage Kimi lacks: **prompt caching
 
 ---
 
-### `cheap-subagent-router.py` — Model + Effort Cost Triage (Non-blocking)
+### `_provider.py` — Provider Detection Helper (Library)
+
+**Not a hook.** Imported by other hooks. Reads `ANTHROPIC_BASE_URL` from the inherited env (set by `claude-glm` / `claude-kimi` shell aliases) and returns one of `"anthropic" | "zai" | "kimi" | "other"`. Other hooks branch on this so the same `~/.claude/settings.json` config behaves correctly across all three aliases without per-alias settings juggling.
+
+Recognized:
+
+| Token | Hostname signals | Used by aliases like |
+|-------|------------------|----------------------|
+| `anthropic` | `api.anthropic.com`, or env unset | plain `claude` |
+| `zai` | `api.z.ai`, `bigmodel` | `claude-glm` (GLM-5.1) |
+| `kimi` | `api.kimi.com`, `moonshot` | `claude-kimi` (Kimi K2.6 / Kimi Code) |
+| `other` | anything else | CometAPI, AtlasCloud, self-hosted, etc. |
+
+To add a new provider, append a hostname check in `detect_provider()` and a label in `PROVIDER_LABELS`. The full set of provider-aware hooks (`web-tool-redirect`, `cheap-subagent-router`) will pick it up automatically.
+
+---
+
+### `web-tool-redirect.py` — Anthropic-only Web Tools (Blocking on non-Anthropic providers)
+
+**Problem:** `WebFetch` and `WebSearch` are Anthropic-server-side tools — the actual fetch and search execute inside Anthropic's API, not in Claude Code's harness. When the session is routed through a third-party Anthropic-compatible endpoint (Z.AI, Moonshot, etc.), these tools typically error out or return empty payloads, and the model burns a turn discovering that.
+
+**What it does:** PreToolUse on `WebFetch` and `WebSearch`. If `detect_provider() == "anthropic"`, exits 0 immediately. Otherwise blocks with `exit 2` and a directive to use `/browse` (gstack) instead. The error message names the active provider (e.g. *"…will not function against Z.AI (GLM)"*) so the model knows where it actually is.
+
+**Why it's a single hook, not per-alias:** `~/.claude/settings.json` is read once at startup; the hook itself branches on env. That means `claude`, `claude-glm`, and `claude-kimi` all load the same config — the hook self-adjusts.
+
+**No Kimi (CLI) equivalent.** This addresses a Claude-Code-specific failure mode introduced by routing to non-Anthropic upstreams.
+
+---
+
+### `cheap-subagent-router.py` — Model + Effort Cost Triage (Non-blocking, Anthropic only)
 
 **Problem:** Claude Code's `Agent` tool accepts two cost-relevant overrides per dispatch: `model` (`"haiku" | "sonnet" | "opus"`) and `effort` (`"low" | "medium" | "high" | "xhigh" | "max"`). When omitted, both inherit from the parent — typically Opus 4.7 + medium effort. Across 817 historical dispatches the breakdown was 335 `general-purpose` and 82 `Explore`; most `Explore` calls were cheap discovery that Haiku 4.5 + low effort handles fine at roughly an order-of-magnitude lower cost.
+
+**Provider-aware (April 2026):** The haiku/sonnet/opus tiers and the `effort` parameter are Anthropic-specific; Z.AI and Moonshot serve a single model id and ignore (or 404 on) tier names. The hook now calls `_provider.detect_provider()` at the top and silent-exits when the active provider isn't Anthropic — so it stays useful under plain `claude` and stays out of the way under `claude-glm` / `claude-kimi`.
 
 **What it does:** Reads the dispatch's `subagent_type`, `description`, `prompt`, and any explicit `model`/`effort` already set, then emits a coaching tip suggesting only the *unset* parameter(s):
 
@@ -83,9 +114,12 @@ The hook never blocks; the model is free to ignore the tip and stick with the pa
 
 ```bash
 mkdir -p ~/.claude/hooks ~/.claude/state
-cp hooks/edit-check.py hooks/re-read-guard.py \
-   hooks/parallel-agent-guard.py hooks/cheap-subagent-router.py ~/.claude/hooks/
+cp hooks/_provider.py hooks/edit-check.py hooks/re-read-guard.py \
+   hooks/parallel-agent-guard.py hooks/cheap-subagent-router.py \
+   hooks/web-tool-redirect.py ~/.claude/hooks/
 ```
+
+> `_provider.py` is a library, not a hook — but it must live next to the hooks that import it (`web-tool-redirect.py`, `cheap-subagent-router.py`). Don't register it in `settings.json`.
 
 ### 2. Add to `~/.claude/settings.json`
 
@@ -108,6 +142,12 @@ Merge the `PreToolUse` block from `settings.json.example` into your existing `~/
         "hooks": [
           {"type": "command", "command": "python3 ~/.claude/hooks/parallel-agent-guard.py"},
           {"type": "command", "command": "python3 ~/.claude/hooks/cheap-subagent-router.py"}
+        ]
+      },
+      {
+        "matcher": "WebFetch|WebSearch",
+        "hooks": [
+          {"type": "command", "command": "python3 ~/.claude/hooks/web-tool-redirect.py"}
         ]
       }
     ]
