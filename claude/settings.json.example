@@ -41,6 +41,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/parallel-fanout-nudge.py"
+          }
+        ]
+      }
     ]
   }
 }

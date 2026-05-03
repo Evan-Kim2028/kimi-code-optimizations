@@ -41,17 +41,37 @@ Claude Code already has one architectural advantage Kimi lacks: **prompt caching
 
 ---
 
-### `parallel-agent-guard.py` — Parallel Agent Dispatch Coach (Non-blocking)
+### `parallel-agent-guard.py` — Parallel Agent Dispatch Enforcement (v3, Blocking)
 
 **Problem:** In a sample of 15 long Claude Code sessions, **817 of 817 `Agent` dispatches were solo turns** — the model never sent multiple `Agent` tool_use blocks in a single assistant message, even when tasks were independent. Sequential dispatch wastes wall-clock time and keeps each subagent's prompt in the parent context longer than necessary.
 
-**What it does (v2 — fires at plan time):** Inspects the FIRST `Agent` dispatch's prompt for plan-shape signals — numbered/step-shaped plans, sequencer phrases (`first ... then`, `after that`), multi-target verbs (`investigate X and Y`), or three-plus parallel bullet points. When detected, emits a directive nudge before the dispatch runs: *"if these steps are independent, cancel this dispatch and re-issue all of them as a parallel batch with `run_in_background=true`."* Suppresses the nudge for clearly-heavy single-task work (threat-modeling, deep-dive, full audit). Fires once per session for plan signals.
+**v3 (May 2026) — escalation to blocking.** v1 (polite tip on the 2nd sequential call) and v2 (plan-time nudge on the 1st call) each ran for a day and each produced **0 behavioral change**: the histogram of Agent-blocks-per-message stayed `{1: N}` across both deployments. The polite path is dead. v3 keeps the v2 plan-time tip and the v1 soft backstop, but **escalates to `exit 2` BLOCKING** when:
 
-**Sequential backstop:** If the previous Agent call was foreground and <60s old, the hook still emits a separate "you should have batched these" tip — the original v1 behavior, kept as a fallback.
+1. The previous assistant message had exactly one `Agent` tool_use, and
+2. No real user turn has happened since (authoritative — read from `transcript_path`), and
+3. Both dispatches use cheap discovery subagent types (`Explore`, `general-purpose`, `default`).
 
-**Why the rewrite:** v1 (a soft tip on the second sequential dispatch) ran for one full day and produced **0 behavioral change** — the agent-blocks-per-message histogram stayed `{1: N}` across 22 dispatches and 21 hook fires. The fix is to nudge at *plan time* (before the first call) when the model is still choosing how to structure the work, with copy-pasteable framing rather than advisory framing.
+When all three hold, the dispatch is refused with a clear directive to re-issue both (and any siblings) as multiple Agent blocks in a single assistant message. The block fires at most twice per session — after that the hook reverts to soft tips so the agent is never deadlocked.
 
-**Port of:** `parallel-agent-guard.py` from the Kimi suite. The Kimi README originally said this hook didn't map cleanly to Claude Code; session-log analysis showed the opposite — the dispatch problem is even more pronounced.
+**Why blocking only on cheap-discovery types:** implementation/heavy work is more likely to actually depend on the prior step's findings; refusing those would create real false positives. Cheap-discovery solos in a row are almost always parallelizable.
+
+**Plan-time tip (carry-over from v2):** First Agent dispatch with multi-step plan signals (numbered list, `first ... then`, `investigate X and Y`, three+ bullets) gets a parallel-batching tip before it runs. Fires once per session.
+
+**Soft sequential backstop (carry-over from v1):** If a 2nd Agent dispatch fires within 600s of the prior one (foreground), and the BLOCKING path doesn't apply, emit the "you should have batched these" tip. Backstop window widened from 60s → 600s to catch the slower kimi/glm cadence.
+
+**Port of:** `parallel-agent-guard.py` from the Kimi suite.
+
+---
+
+### `parallel-fanout-nudge.py` — Fan-out Push for Weaker Lanes (UserPromptSubmit, Non-blocking)
+
+**Problem:** `parallel-agent-guard.py` is a `PreToolUse` hook — it can only react after the model has *already* chosen to dispatch a single Agent. For lanes where the per-call IQ is lower (`claude-kimi`, `claude-glm`, or a Claude session with `effortLevel != "high"`), the right strategy is to fan out *harder*, not less — many small focused heads beat one weaker head soloing the work in the parent context. We need to push that decomposition at *prompt-submit time*, before the model has even begun structuring the response.
+
+**What it does:** `UserPromptSubmit` hook. If the active provider is `kimi` or `zai` (or settings.json's `effortLevel` is `low`/`medium`), AND the user's prompt has plan-shape signals (numbered steps, multi-target verbs, "and ... and", three+ bullets), inject a `hookSpecificOutput.additionalContext` directive telling the model to decompose into multiple parallel Agent dispatches. Always exits 0 — never blocks the user's typing.
+
+**Why this is separate from `parallel-agent-guard`:** different hook event (`UserPromptSubmit` vs `PreToolUse`), different timing (before any tool use vs after), different audience (the model picking a strategy vs the model executing one). They're complementary.
+
+**No Kimi (CLI) equivalent.** This is a Claude-Code-specific lane targeting Anthropic-compatible upstreams.
 
 ---
 
@@ -84,29 +104,27 @@ To add a new provider, append a hostname check in `detect_provider()` and a labe
 
 ---
 
-### `cheap-subagent-router.py` — Model + Effort Cost Triage (Non-blocking, Anthropic only)
+### `cheap-subagent-router.py` — Model Cost Triage (Non-blocking, Anthropic only)
 
-**Problem:** Claude Code's `Agent` tool accepts two cost-relevant overrides per dispatch: `model` (`"haiku" | "sonnet" | "opus"`) and `effort` (`"low" | "medium" | "high" | "xhigh" | "max"`). When omitted, both inherit from the parent — typically Opus 4.7 + medium effort. Across 817 historical dispatches the breakdown was 335 `general-purpose` and 82 `Explore`; most `Explore` calls were cheap discovery that Haiku 4.5 + low effort handles fine at roughly an order-of-magnitude lower cost.
+**Problem:** Claude Code's `Agent` tool accepts a per-dispatch `model` override (`"haiku" | "sonnet" | "opus"`). When omitted, the subagent inherits the parent session's model — typically Opus 4.7. Across 817 historical dispatches, 335 were `general-purpose` and 82 were `Explore`; most `Explore` calls were cheap discovery that Haiku 4.5 handles fine at roughly an order-of-magnitude lower cost.
 
-**Provider-aware (April 2026):** The haiku/sonnet/opus tiers and the `effort` parameter are Anthropic-specific; Z.AI and Moonshot serve a single model id and ignore (or 404 on) tier names. The hook now calls `_provider.detect_provider()` at the top and silent-exits when the active provider isn't Anthropic — so it stays useful under plain `claude` and stays out of the way under `claude-glm` / `claude-kimi`.
+**Provider-aware (April 2026):** The haiku/sonnet/opus tiers are Anthropic-specific; Z.AI and Moonshot serve a single model id and ignore (or 404 on) tier names. The hook calls `_provider.detect_provider()` at the top and silent-exits when the active provider isn't Anthropic.
 
-**What it does:** Reads the dispatch's `subagent_type`, `description`, `prompt`, and any explicit `model`/`effort` already set, then emits a coaching tip suggesting only the *unset* parameter(s):
+**Effort suggestions removed (May 2026):** An earlier version of this hook also suggested `effort: "low" | "medium"` alongside `model`. **The Agent tool has no `effort` parameter** — `effortLevel` is a session-wide settings.json key, not a per-dispatch arg. Suggesting it produced an `InputValidationError` on the model's first attempt and trained it to ignore the entire COST ROUTER tip block. 24h of production data: 0/28 dispatches set an explicit model. The effort suggestions are gone; `cheap-subagent-router` now only suggests the parameter that actually exists.
 
-| Signal | Model | Effort |
-|--------|-------|--------|
-| `subagent_type == "Explore"` or short prompt with discovery verbs | `haiku` | `low` |
-| Implementation verbs (implement / write / edit / fix / refactor / port / wire up) | `sonnet` | `medium` |
-| Review / audit / architecture / threat-model / security / cross-reference | **silent** | **silent** |
-| Generic dispatch with no strong signal | `sonnet` | (inherit) |
-| Both `model` and `effort` already set | **silent** | **silent** |
+**What it does:** Reads the dispatch's `subagent_type`, `description`, `prompt`, and any explicit `model` already set, then emits a coaching tip suggesting a model when one isn't chosen:
 
-The point is to make Opus *and* high effort a *conscious choice*, not an *inherited default*. Effort is dialed independently of model — a `model: "sonnet"` dispatch with `effort: "low"` is materially cheaper than the same dispatch at default effort, and that's frequently the right call for scoped work.
+| Signal | Model |
+|--------|-------|
+| `subagent_type == "Explore"` or short prompt with discovery verbs | `haiku` |
+| Implementation verbs (implement / write / edit / fix / refactor / port / wire up) | `sonnet` |
+| Review / audit / architecture / threat-model / security / cross-reference | **silent** (Opus is right) |
+| Generic dispatch with no strong signal | `sonnet` |
+| `model` already set | **silent** (respect explicit choice) |
 
-The hook never blocks; the model is free to ignore the tip and stick with the parent's settings when the task warrants it.
+The point is to make Opus a *conscious choice*, not an *inherited default*. The hook never blocks.
 
-**No Kimi equivalent.** Kimi CLI does not expose per-subagent model or effort selection, so this hook is Claude-Code-specific.
-
-**Supported `effort` values** (per [Claude Code model config docs](https://code.claude.com/docs/en/model-config#adjust-effort-level)): `low`, `medium`, `high`, `xhigh`, `max`. The valid set is model-dependent; this hook only ever suggests `low` or `medium`, which all current Claude models support.
+**No Kimi equivalent.** Kimi CLI does not expose per-subagent model selection.
 
 ## Installation
 
@@ -115,11 +133,12 @@ The hook never blocks; the model is free to ignore the tip and stick with the pa
 ```bash
 mkdir -p ~/.claude/hooks ~/.claude/state
 cp hooks/_provider.py hooks/edit-check.py hooks/re-read-guard.py \
-   hooks/parallel-agent-guard.py hooks/cheap-subagent-router.py \
-   hooks/web-tool-redirect.py ~/.claude/hooks/
+   hooks/parallel-agent-guard.py hooks/parallel-fanout-nudge.py \
+   hooks/cheap-subagent-router.py hooks/web-tool-redirect.py \
+   ~/.claude/hooks/
 ```
 
-> `_provider.py` is a library, not a hook — but it must live next to the hooks that import it (`web-tool-redirect.py`, `cheap-subagent-router.py`). Don't register it in `settings.json`.
+> `_provider.py` is a library, not a hook — but it must live next to the hooks that import it (`web-tool-redirect.py`, `cheap-subagent-router.py`, `parallel-fanout-nudge.py`). Don't register it in `settings.json`.
 
 ### 2. Add to `~/.claude/settings.json`
 
@@ -148,6 +167,14 @@ Merge the `PreToolUse` block from `settings.json.example` into your existing `~/
         "matcher": "WebFetch|WebSearch",
         "hooks": [
           {"type": "command", "command": "python3 ~/.claude/hooks/web-tool-redirect.py"}
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "python3 ~/.claude/hooks/parallel-fanout-nudge.py"}
         ]
       }
     ]
