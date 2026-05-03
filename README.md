@@ -25,20 +25,20 @@ Kimi's inefficient patterns:
 
 This repo gives you:
 1. **`AGENTS.md`** — Project-level rules that guide the model toward efficient patterns
-2. **`hooks/shell-check.py`** — PreToolUse hook that coaches the model away from `cat`/`grep`/`cd` in Shell calls (tips, non-blocking)
-2b. **`hooks/shell-check-blocking.py`** — Aggressive variant that **blocks** `cat`/`grep`/`cd` entirely (exit 2)
-3. **`hooks/strreplace-check.py`** — PreToolUse hook that validates `StrReplaceFile` `old` strings exist before the tool fires (blocks guaranteed-fail turns)
-4. **`hooks/batch-nudge.py`** — PostToolUse hook that detects sequential similar calls and emits real-time batching tips
-5. **`hooks/swarm-nudge.py`** — PostToolUse hook that detects complex manual work and nudges toward subagent swarm decomposition
-6. **`hooks/swarm-nudge-v2.py`** — Improved swarm nudge that tracks manual work *since last agent* (catches the "agent bait-and-switch" pattern where models dispatch agents early then grind manually)
-7. **`hooks/discovery-intercept.py`** — PreToolUse hook that intercepts ReadFile/Grep/Shell calls during long manual streaks and asks "should this be an agent?" *before* the call fires
-8. **`hooks/re-read-guard.py`** — PreToolUse hook that warns when the model re-reads an unchanged file this session
-9. **`hooks/line-offset-enforcer.py`** — PreToolUse hook that nudges toward `line_offset` on large file reads
-10. **`hooks/parallel-agent-guard-v2.py`** — Enhanced PreToolUse hook with timestamp-based same-turn detection and escalating warnings for sequential agent dispatch
-11. **`hooks/background-agent-nudge.py`** — PreToolUse hook that suggests `run_in_background=true` for discovery/explore tasks
-12. **`hooks/todo-persistence-check.py`** — PostToolUse hook that detects todo list resets and encourages incremental updates
-13. **`hooks/taskoutput-guard.py`** — PreToolUse hook that ensures `TaskList` is called before `TaskOutput` polling
-14. **`hooks/re-read-turn-guard.py`** — PostToolUse hook that guards against excessive same-turn file re-reads
+2. **`hooks/kimi/shell-check.py`** — PreToolUse hook that coaches the model away from `cat`/`grep`/`cd` in Shell calls (tips, non-blocking)
+2b. **`hooks/kimi/shell-check-blocking.py`** — Aggressive variant that **blocks** `cat`/`grep`/`cd` entirely (exit 2)
+3. **`hooks/kimi/strreplace-check.py`** — PreToolUse hook that validates `StrReplaceFile` `old` strings exist before the tool fires (blocks guaranteed-fail turns)
+4. **`hooks/kimi/batch-nudge.py`** — PostToolUse hook that detects sequential similar calls and emits real-time batching tips
+5. **`hooks/kimi/swarm-nudge.py`** — PostToolUse hook that detects complex manual work and nudges toward subagent swarm decomposition
+6. **`hooks/kimi/swarm-nudge-v2.py`** — Improved swarm nudge that tracks manual work *since last agent* (catches the "agent bait-and-switch" pattern where models dispatch agents early then grind manually)
+7. **`hooks/kimi/discovery-intercept.py`** — PreToolUse hook that intercepts ReadFile/Grep/Shell calls during long manual streaks and asks "should this be an agent?" *before* the call fires
+8. **`hooks/kimi/re-read-guard.py`** — PreToolUse hook that warns when the model re-reads an unchanged file this session
+9. **`hooks/kimi/line-offset-enforcer.py`** — PreToolUse hook that nudges toward `line_offset` on large file reads
+10. **`hooks/kimi/parallel-agent-guard-v2.py`** — Enhanced PreToolUse hook with timestamp-based same-turn detection and escalating warnings for sequential agent dispatch
+11. **`hooks/kimi/background-agent-nudge.py`** — PreToolUse hook that suggests `run_in_background=true` for discovery/explore tasks
+12. **`hooks/kimi/todo-persistence-check.py`** — PostToolUse hook that detects todo list resets and encourages incremental updates
+13. **`hooks/kimi/taskoutput-guard.py`** — PreToolUse hook that ensures `TaskList` is called before `TaskOutput` polling
+14. **`hooks/kimi/re-read-turn-guard.py`** — PostToolUse hook that guards against excessive same-turn file re-reads
 15. **`bin/apply-patch`** — Safe unified-diff application with built-in dry-run
 11. **`bin/make-patch`** — Converts `old`/`new` text pairs into valid unified diffs (no manual line-number math)
 12. **`bin/multi-read`** — Reads multiple files in one Shell call (bypasses N sequential ReadFile calls for small files)
@@ -60,13 +60,13 @@ Claude also has no native `Grep` or `Glob` tools (unlike Kimi), so Bash grep and
 
 Four hooks live in [`claude/`](claude/README.md):
 
-1. **`claude/hooks/edit-check.py`** — PreToolUse on `Edit`. Reads the target file and blocks (exit 2) if `old_string` isn't found verbatim. Eliminates the stale-edit round-trip that fires after context compaction or parallel edits. *Port of `strreplace-check.py`.*
+1. **`hooks/claude/edit-check.py`** — PreToolUse on `Edit`. Reads the target file and blocks (exit 2) if `old_string` isn't found verbatim. Eliminates the stale-edit round-trip that fires after context compaction or parallel edits. *Port of `strreplace-check.py`.*
 
-2. **`claude/hooks/re-read-guard.py`** — PreToolUse on `Read`. Tracks file path + mtime per session; warns when Claude is about to re-read an unchanged file it already loaded. *Port of `re-read-guard.py`, adapted for Claude's `offset`/`limit` parameter names.*
+2. **`hooks/claude/re-read-guard.py`** — PreToolUse on `Read`. Tracks file path + mtime per session; warns when Claude is about to re-read an unchanged file it already loaded. *Port of `re-read-guard.py`, adapted for Claude's `offset`/`limit` parameter names.*
 
-3. **`claude/hooks/parallel-agent-guard.py`** — PreToolUse on `Agent`. In a sample of 15 long sessions, **817/817 `Agent` dispatches were solo turns** (zero parallel batching). v2 of this hook (April 2026) inspects the *first* dispatch's prompt for plan-shape signals — numbered steps, sequencer phrases (`first ... then`), multi-target verbs — and emits a directive nudge at plan time recommending multiple `Agent` blocks in a single assistant message with `run_in_background=true`. v1 fired on the *second* sequential dispatch and produced zero behavioral change in production; v2 moves the nudge upstream to where the planning happens. *Evolved from `parallel-agent-guard.py`.*
+3. **`hooks/claude/parallel-agent-guard.py`** — PreToolUse on `Agent`. In a sample of 15 long sessions, **817/817 `Agent` dispatches were solo turns** (zero parallel batching). v2 of this hook (April 2026) inspects the *first* dispatch's prompt for plan-shape signals — numbered steps, sequencer phrases (`first ... then`), multi-target verbs — and emits a directive nudge at plan time recommending multiple `Agent` blocks in a single assistant message with `run_in_background=true`. v1 fired on the *second* sequential dispatch and produced zero behavioral change in production; v2 moves the nudge upstream to where the planning happens. *Evolved from `parallel-agent-guard.py`.*
 
-4. **`claude/hooks/cheap-subagent-router.py`** — PreToolUse on `Agent`. Claude Code's `Agent` tool accepts both `model: "haiku" | "sonnet" | "opus"` and `effort: "low" | "medium" | "high" | "xhigh" | "max"` per dispatch; when omitted, both inherit from the parent (often Opus + medium). This hook triages the dispatch and suggests Haiku + low effort for discovery, Sonnet + medium effort for scoped implementation, and stays silent on review/architecture/security tasks where the Opus + inherited-effort default is correct. Suggests only the *unset* parameter(s). Makes Opus and high effort *conscious choices*, not *inherited defaults*. Production data after one full day on the model-only version: 68% of subagent dispatches set an explicit model (vs 0% baseline). **Claude-Code-specific** — Kimi has no equivalent.
+4. **`hooks/claude/cheap-subagent-router.py`** — PreToolUse on `Agent`. Claude Code's `Agent` tool accepts both `model: "haiku" | "sonnet" | "opus"` and `effort: "low" | "medium" | "high" | "xhigh" | "max"` per dispatch; when omitted, both inherit from the parent (often Opus + medium). This hook triages the dispatch and suggests Haiku + low effort for discovery, Sonnet + medium effort for scoped implementation, and stays silent on review/architecture/security tasks where the Opus + inherited-effort default is correct. Suggests only the *unset* parameter(s). Makes Opus and high effort *conscious choices*, not *inherited defaults*. Production data after one full day on the model-only version: 68% of subagent dispatches set an explicit model (vs 0% baseline). **Claude-Code-specific** — Kimi has no equivalent.
 
 > A fifth hook (`bash-check.py`, cat/head/tail → Read tool nudge) shipped in the original release and was **removed** on April 30 2026 after a per-hook eval — ~79% false-positive rate on piped use. See [`claude/README.md`](claude/README.md#empirical-note-when-a-hook-earns-removal) for the data.
 
@@ -124,10 +124,10 @@ cd kimi-code-optimizations
 ```bash
 # Copy hook scripts to ~/.kimi/hooks/
 mkdir -p ~/.kimi/hooks ~/.kimi/state
-cp hooks/shell-check.py hooks/strreplace-check.py hooks/batch-nudge.py \
-   hooks/swarm-nudge-v2.py hooks/discovery-intercept.py \
-   hooks/re-read-guard.py hooks/line-offset-enforcer.py \
-   hooks/parallel-agent-guard.py hooks/shell-output-truncator.py ~/.kimi/hooks/
+cp hooks/kimi/shell-check.py hooks/kimi/strreplace-check.py hooks/kimi/batch-nudge.py \
+   hooks/kimi/swarm-nudge-v2.py hooks/kimi/discovery-intercept.py \
+   hooks/kimi/re-read-guard.py hooks/kimi/line-offset-enforcer.py \
+   hooks/kimi/parallel-agent-guard.py hooks/kimi/shell-output-truncator.py ~/.kimi/hooks/
 
 # Add to your ~/.kimi/config.toml
 cat >> ~/.kimi/config.toml << 'EOF'
@@ -135,55 +135,55 @@ cat >> ~/.kimi/config.toml << 'EOF'
 [[hooks]]
 event = "PreToolUse"
 matcher = "Shell"
-command = "python3 /home/evan/.kimi/hooks/shell-check.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/shell-check.py"
 timeout = 5
 
 [[hooks]]
 event = "PreToolUse"
 matcher = "StrReplaceFile"
-command = "python3 /home/evan/.kimi/hooks/strreplace-check.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/strreplace-check.py"
 timeout = 3
 
 [[hooks]]
 event = "PreToolUse"
 matcher = "ReadFile|Grep|Shell"
-command = "python3 /home/evan/.kimi/hooks/discovery-intercept.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/discovery-intercept.py"
 timeout = 2
 
 [[hooks]]
 event = "PreToolUse"
 matcher = "ReadFile"
-command = "python3 /home/evan/.kimi/hooks/re-read-guard.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/re-read-guard.py"
 timeout = 3
 
 [[hooks]]
 event = "PreToolUse"
 matcher = "ReadFile"
-command = "python3 /home/evan/.kimi/hooks/line-offset-enforcer.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/line-offset-enforcer.py"
 timeout = 2
 
 [[hooks]]
 event = "PreToolUse"
 matcher = "Agent"
-command = "python3 /home/evan/.kimi/hooks/parallel-agent-guard.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/parallel-agent-guard.py"
 timeout = 2
 
 [[hooks]]
 event = "PreToolUse"
 matcher = "Shell"
-command = "python3 /home/evan/.kimi/hooks/shell-output-truncator.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/shell-output-truncator.py"
 timeout = 2
 
 [[hooks]]
 event = "PostToolUse"
 matcher = ".*"
-command = "python3 /home/evan/.kimi/hooks/batch-nudge.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/batch-nudge.py"
 timeout = 2
 
 [[hooks]]
 event = "PostToolUse"
 matcher = ".*"
-command = "python3 /home/evan/.kimi/hooks/swarm-nudge-v2.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/swarm-nudge-v2.py"
 timeout = 2
 EOF
 
@@ -584,29 +584,33 @@ kimi-code-optimizations/
 │   ├── apply-patch             # Safe patch application helper
 │   ├── make-patch              # Old/new → unified diff converter
 │   └── multi-read              # Read multiple files in one Shell call
-├── hooks/                      # Kimi Code CLI hooks
-│   ├── shell-check.py          # PreToolUse: coach cat/grep/cd → native tools
-│   ├── shell-check-blocking.py # PreToolUse: block cat/grep/cd (aggressive)
-│   ├── strreplace-check.py     # PreToolUse: validate old string exists
-│   ├── batch-nudge.py          # PostToolUse: detect sequential calls
-│   ├── swarm-nudge.py          # PostToolUse: v1 total-count swarm detection
-│   ├── swarm-nudge-v2.py       # PostToolUse: v2 streak-aware swarm detection
-│   ├── discovery-intercept.py  # PreToolUse: intercept manual discovery streaks
-│   ├── re-read-guard.py        # PreToolUse: warn on re-reading unchanged files
-│   ├── line-offset-enforcer.py # PreToolUse: nudge toward line_offset on large files
-│   ├── parallel-agent-guard-v2.py  # PreToolUse: v2 sequential agent guard with same-turn detection
-│   ├── background-agent-nudge.py   # PreToolUse: nudge toward background for discovery agents
-│   ├── todo-persistence-check.py   # PostToolUse: detect todo list resets
-│   ├── taskoutput-guard.py         # PreToolUse: ensure TaskList before TaskOutput
-│   └── re-read-turn-guard.py       # PostToolUse: guard same-turn re-read storms
-└── claude/                          # Claude Code CLI hooks
+├── hooks/
+│   ├── kimi/                       # Kimi Code CLI hooks
+│   │   ├── shell-check.py          # PreToolUse: coach cat/grep/cd → native tools
+│   │   ├── shell-check-blocking.py # PreToolUse: block cat/grep/cd (aggressive)
+│   │   ├── strreplace-check.py     # PreToolUse: validate old string exists
+│   │   ├── batch-nudge.py          # PostToolUse: detect sequential calls
+│   │   ├── swarm-nudge.py          # PostToolUse: v1 total-count swarm detection
+│   │   ├── swarm-nudge-v2.py       # PostToolUse: v2 streak-aware swarm detection
+│   │   ├── discovery-intercept.py  # PreToolUse: intercept manual discovery streaks
+│   │   ├── re-read-guard.py        # PreToolUse: warn on re-reading unchanged files
+│   │   ├── line-offset-enforcer.py # PreToolUse: nudge toward line_offset on large files
+│   │   ├── parallel-agent-guard-v2.py  # PreToolUse: v2 sequential agent guard with same-turn detection
+│   │   ├── background-agent-nudge.py   # PreToolUse: nudge toward background for discovery agents
+│   │   ├── todo-persistence-check.py   # PostToolUse: detect todo list resets
+│   │   ├── taskoutput-guard.py         # PreToolUse: ensure TaskList before TaskOutput
+│   │   └── re-read-turn-guard.py       # PostToolUse: guard same-turn re-read storms
+│   └── claude/                     # Claude Code CLI hooks
+│       ├── edit-check.py           # PreToolUse: validate Edit old_string exists
+│       ├── re-read-guard.py        # PreToolUse: warn on re-reading unchanged files
+│       ├── parallel-agent-guard.py # PreToolUse: plan-time nudge toward parallel Agent batching
+│       ├── cheap-subagent-router.py# PreToolUse: triage subagent model (haiku/sonnet/opus)
+│       ├── parallel-fanout-nudge.py# UserPromptSubmit: fan-out hint on weaker lanes
+│       ├── web-tool-redirect.py    # PreToolUse: redirect WebFetch/WebSearch on 3rd-party endpoints
+│       └── _provider.py            # Shared provider detection utility
+└── claude/
     ├── README.md                    # Claude-specific installation and diff table
-    ├── settings.json.example        # Hook config snippet for ~/.claude/settings.json
-    └── hooks/
-        ├── edit-check.py            # PreToolUse: validate Edit old_string exists
-        ├── re-read-guard.py         # PreToolUse: warn on re-reading unchanged files
-        ├── parallel-agent-guard.py  # PreToolUse: plan-time nudge toward parallel Agent batching
-        └── cheap-subagent-router.py # PreToolUse: triage subagent model (haiku/sonnet/opus)
+    └── settings.json.example        # Hook config snippet for ~/.claude/settings.json
 ```
 
 ## Requirements

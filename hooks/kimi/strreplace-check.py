@@ -6,7 +6,7 @@ Add to ~/.kimi/config.toml:
 [[hooks]]
 event = "PreToolUse"
 matcher = "StrReplaceFile"
-command = "python3 /path/to/kimi-code-optimizations/hooks/strreplace-check.py"
+command = "python3 /path/to/kimi-code-optimizations/hooks/kimi/strreplace-check.py"
 timeout = 3
 """
 import json

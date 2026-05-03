@@ -9,7 +9,7 @@ Add to ~/.kimi/config.toml ABOVE the other hooks (order matters):
 
 [[hooks]]
 event = "PreToolUse"
-command = "python3 /path/to/kimi-code-optimizations/hooks/discovery-intercept.py"
+command = "python3 /path/to/kimi-code-optimizations/hooks/kimi/discovery-intercept.py"
 matcher = "ReadFile|Grep|Shell"
 timeout = 2
 """

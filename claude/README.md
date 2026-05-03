@@ -132,9 +132,9 @@ The point is to make Opus a *conscious choice*, not an *inherited default*. The 
 
 ```bash
 mkdir -p ~/.claude/hooks ~/.claude/state
-cp hooks/_provider.py hooks/edit-check.py hooks/re-read-guard.py \
-   hooks/parallel-agent-guard.py hooks/parallel-fanout-nudge.py \
-   hooks/cheap-subagent-router.py hooks/web-tool-redirect.py \
+cp hooks/claude/_provider.py hooks/claude/edit-check.py hooks/claude/re-read-guard.py \
+   hooks/claude/parallel-agent-guard.py hooks/claude/parallel-fanout-nudge.py \
+   hooks/claude/cheap-subagent-router.py hooks/claude/web-tool-redirect.py \
    ~/.claude/hooks/
 ```
 

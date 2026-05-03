@@ -6,7 +6,7 @@ Add to ~/.kimi/config.toml:
 [[hooks]]
 event = "PostToolUse"
 matcher = ".*"
-command = "python3 /path/to/kimi-code-optimizations/hooks/swarm-nudge.py"
+command = "python3 /path/to/kimi-code-optimizations/hooks/kimi/swarm-nudge.py"
 timeout = 2
 
 This hook tracks per-session tool usage and emits tips when the model

@@ -6,62 +6,62 @@
 [[hooks]]
 event = "PreToolUse"
 matcher = "Shell"
-command = "python3 /home/evan/.kimi/hooks/shell-check.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/shell-check.py"
 timeout = 5
 
 [[hooks]]
 event = "PreToolUse"
 matcher = "StrReplaceFile"
-command = "python3 /home/evan/.kimi/hooks/strreplace-check.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/strreplace-check.py"
 timeout = 3
 
 # NEW: Intercept manual discovery during long streaks and suggest agents
 [[hooks]]
 event = "PreToolUse"
 matcher = "ReadFile|Grep|Shell"
-command = "python3 /home/evan/.kimi/hooks/discovery-intercept.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/discovery-intercept.py"
 timeout = 2
 
 # NEW: Guard against re-reading unchanged files (saves context after compaction)
 [[hooks]]
 event = "PreToolUse"
 matcher = "ReadFile"
-command = "python3 /home/evan/.kimi/hooks/re-read-guard.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/re-read-guard.py"
 timeout = 3
 
 # NEW: Nudge toward line_offset on large files (saves context)
 [[hooks]]
 event = "PreToolUse"
 matcher = "ReadFile"
-command = "python3 /home/evan/.kimi/hooks/line-offset-enforcer.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/line-offset-enforcer.py"
 timeout = 2
 
 # NEW: Guard against sequential agent dispatch (parallelize instead)
 [[hooks]]
 event = "PreToolUse"
 matcher = "Agent"
-command = "python3 /home/evan/.kimi/hooks/parallel-agent-guard-v2.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/parallel-agent-guard-v2.py"
 timeout = 2
 
 # NEW: Nudge toward run_in_background=true for discovery/independent agents
 [[hooks]]
 event = "PreToolUse"
 matcher = "Agent"
-command = "python3 /home/evan/.kimi/hooks/background-agent-nudge.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/background-agent-nudge.py"
 timeout = 2
 
 # NEW: Ensure TaskList is called before TaskOutput polling
 [[hooks]]
 event = "PreToolUse"
 matcher = "TaskOutput"
-command = "python3 /home/evan/.kimi/hooks/taskoutput-guard.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/taskoutput-guard.py"
 timeout = 2
 
 # NEW: Detect Shell commands with unbounded output
 [[hooks]]
 event = "PreToolUse"
 matcher = "Shell"
-command = "python3 /home/evan/.kimi/hooks/shell-output-truncator.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/shell-output-truncator.py"
 timeout = 2
 
 # --- PostToolUse hooks (react AFTER the call) ---
@@ -69,33 +69,33 @@ timeout = 2
 [[hooks]]
 event = "PostToolUse"
 matcher = ".*"
-command = "python3 /home/evan/.kimi/hooks/batch-nudge.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/batch-nudge.py"
 timeout = 2
 
 # NEW: Improved swarm nudge (v2) — tracks manual work since last agent
 [[hooks]]
 event = "PostToolUse"
 matcher = ".*"
-command = "python3 /home/evan/.kimi/hooks/swarm-nudge-v2.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/swarm-nudge-v2.py"
 timeout = 2
 
 # NEW: Detect SetTodoList resets and encourage incremental updates
 [[hooks]]
 event = "PostToolUse"
 matcher = "SetTodoList"
-command = "python3 /home/evan/.kimi/hooks/todo-persistence-check.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/todo-persistence-check.py"
 timeout = 2
 
 # NEW: Guard against excessive same-turn file re-reads
 [[hooks]]
 event = "PostToolUse"
 matcher = "ReadFile"
-command = "python3 /home/evan/.kimi/hooks/re-read-turn-guard.py"
+command = "python3 /home/evan/.kimi/hooks/kimi/re-read-turn-guard.py"
 timeout = 2
 
 # (Optional) Original swarm nudge — kept for comparison or if you prefer total-count logic
 # [[hooks]]
 # event = "PostToolUse"
 # matcher = ".*"
-# command = "python3 /home/evan/.kimi/hooks/swarm-nudge.py"
+# command = "python3 /home/evan/.kimi/hooks/kimi/swarm-nudge.py"
 # timeout = 2

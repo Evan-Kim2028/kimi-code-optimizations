@@ -10,7 +10,7 @@ Add to ~/.kimi/config.toml:
 [[hooks]]
 event = "PostToolUse"
 matcher = ".*"
-command = "python3 /path/to/kimi-code-optimizations/hooks/swarm-nudge-v2.py"
+command = "python3 /path/to/kimi-code-optimizations/hooks/kimi/swarm-nudge-v2.py"
 timeout = 2
 """
 import json

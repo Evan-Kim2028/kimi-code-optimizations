@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/edit-check.py"
+            "command": "python3 /path/to/kimi-code-optimizations/hooks/claude/edit-check.py"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/re-read-guard.py"
+            "command": "python3 /path/to/kimi-code-optimizations/hooks/claude/re-read-guard.py"
           }
         ]
       },
@@ -24,11 +24,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/parallel-agent-guard.py"
+            "command": "python3 /path/to/kimi-code-optimizations/hooks/claude/parallel-agent-guard.py"
           },
           {
             "type": "command",
-            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/cheap-subagent-router.py"
+            "command": "python3 /path/to/kimi-code-optimizations/hooks/claude/cheap-subagent-router.py"
           }
         ]
       },
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/web-tool-redirect.py"
+            "command": "python3 /path/to/kimi-code-optimizations/hooks/claude/web-tool-redirect.py"
           }
         ]
       }
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /path/to/kimi-code-optimizations/claude/hooks/parallel-fanout-nudge.py"
+            "command": "python3 /path/to/kimi-code-optimizations/hooks/claude/parallel-fanout-nudge.py"
           }
         ]
       }

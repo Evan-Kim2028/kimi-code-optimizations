@@ -6,7 +6,7 @@ Add to ~/.kimi/config.toml:
 [[hooks]]
 event = "PostToolUse"
 matcher = ".*"
-command = "python3 /path/to/kimi-code-optimizations/hooks/batch-nudge.py"
+command = "python3 /path/to/kimi-code-optimizations/hooks/kimi/batch-nudge.py"
 timeout = 2
 
 This hook maintains a sliding window of recent tool calls per session.
