@@ -1,17 +1,16 @@
 # Agent Harness Optimizations
 
-A productivity toolkit for AI coding-agent CLIs — enforcing efficient tool usage, parallel dispatch, and cost-aware subagent routing through harness-level hooks. Currently covers [Kimi Code CLI](https://github.com/moonshot-ai/kimi-cli) and [Claude Code CLI](https://claude.ai/code); the patterns generalize to any harness with a PreToolUse/PostToolUse hook system (Codex, Cursor, Gemini CLI, OpenHands).
+A productivity toolkit for the [Kimi Code CLI](https://github.com/moonshot-ai/kimi-cli) — enforcing efficient tool usage, parallel dispatch, and cost-aware subagent routing through harness-level hooks. The patterns generalize to any harness with a PreToolUse/PostToolUse hook system (Codex, Cursor, Gemini CLI, OpenHands).
 
-> Repo name is historical (`kimi-code-optimizations`) — the scope is broader now. New harnesses welcome via PR.
+> Previously `kimi-code-optimizations`. Focused on Kimi Code CLI; patterns may generalize.
 
 ## What's This?
 
 AI coding agents are powerful, but they burn turns on inefficient patterns: cat'ing files instead of using a structured Read tool, dispatching subagents serially instead of in parallel, defaulting to the most expensive model for cheap discovery work. The patterns differ by harness, but the fix is the same: **hooks as in-conversation training signals** that redirect behavior in real time.
 
-This repo covers two harnesses today:
+This repo provides:
 
 - **[`hooks/`](#kimi-code-cli-hooks) + [`bin/`](#helper-scripts)** — Kimi Code CLI suite (Shell coaching, StrReplaceFile validation, swarm nudges, context guards)
-- **[`claude/`](claude/README.md)** — Claude Code CLI hooks (Edit validation, Bash coaching, re-read guard, parallel-agent guard, cost-aware subagent router)
 
 ---
 
@@ -45,33 +44,6 @@ This repo gives you:
 
 ---
 
-## Claude Code CLI Hooks
-
-Claude Code has one architectural advantage Kimi lacks: **prompt caching**. The Anthropic API caches context across compaction events, so re-reading tokens after a compaction is cheap (cache hits). But session log analysis against Kimi+hooks reveals clear behavioral gaps that caching doesn't fix:
-
-| Pattern | Claude Code (observed) | Kimi + hooks |
-|---------|------------------------|--------------|
-| Standalone `cd` in Bash | 433/session | ~0 |
-| `cat`/`head`/`tail` in Bash | 271/session | ~0 |
-| Stale `Edit` calls (would fail) | unguarded | 37 blocked/session |
-| Re-reads after compaction | unguarded | guarded |
-
-Claude also has no native `Grep` or `Glob` tools (unlike Kimi), so Bash grep and find are legitimate and not flagged here.
-
-Four hooks live in [`claude/`](claude/README.md):
-
-1. **`hooks/claude/edit-check.py`** — PreToolUse on `Edit`. Reads the target file and blocks (exit 2) if `old_string` isn't found verbatim. Eliminates the stale-edit round-trip that fires after context compaction or parallel edits. *Port of `strreplace-check.py`.*
-
-2. **`hooks/claude/re-read-guard.py`** — PreToolUse on `Read`. Tracks file path + mtime per session; warns when Claude is about to re-read an unchanged file it already loaded. *Port of `re-read-guard.py`, adapted for Claude's `offset`/`limit` parameter names.*
-
-3. **`hooks/claude/parallel-agent-guard.py`** — PreToolUse on `Agent`. In a sample of 15 long sessions, **817/817 `Agent` dispatches were solo turns** (zero parallel batching). v2 of this hook (April 2026) inspects the *first* dispatch's prompt for plan-shape signals — numbered steps, sequencer phrases (`first ... then`), multi-target verbs — and emits a directive nudge at plan time recommending multiple `Agent` blocks in a single assistant message with `run_in_background=true`. v1 fired on the *second* sequential dispatch and produced zero behavioral change in production; v2 moves the nudge upstream to where the planning happens. *Evolved from `parallel-agent-guard.py`.*
-
-4. **`hooks/claude/cheap-subagent-router.py`** — PreToolUse on `Agent`. Claude Code's `Agent` tool accepts both `model: "haiku" | "sonnet" | "opus"` and `effort: "low" | "medium" | "high" | "xhigh" | "max"` per dispatch; when omitted, both inherit from the parent (often Opus + medium). This hook triages the dispatch and suggests Haiku + low effort for discovery, Sonnet + medium effort for scoped implementation, and stays silent on review/architecture/security tasks where the Opus + inherited-effort default is correct. Suggests only the *unset* parameter(s). Makes Opus and high effort *conscious choices*, not *inherited defaults*. Production data after one full day on the model-only version: 68% of subagent dispatches set an explicit model (vs 0% baseline). **Claude-Code-specific** — Kimi has no equivalent.
-
-> A fifth hook (`bash-check.py`, cat/head/tail → Read tool nudge) shipped in the original release and was **removed** on April 30 2026 after a per-hook eval — ~79% false-positive rate on piped use. See [`claude/README.md`](claude/README.md#empirical-note-when-a-hook-earns-removal) for the data.
-
-See [`claude/README.md`](claude/README.md) for installation instructions, a diff table of Kimi vs Claude Code tool names, and an empirical note on hook-stdout propagation into subagents (it doesn't — coach the parent).
-
 ## The Aha: In-Conversation Training Signals
 
 The big insight here is that **hooks are real-time training signals**.
@@ -91,11 +63,9 @@ This is why we measure adoption rate (42% of tipped sessions show reduced Shell 
 
 ### Why This Matters: Models Have No Cross-Session Memory
 
-An independent [analysis of exfiltrated system prompts](https://www.dbreunig.com/2026/02/10/system-prompts-define-the-agent-as-much-as-the-model.html) across six CLI coding agents (Claude Code, Cursor, Gemini CLI, Codex CLI, OpenHands, and Kimi CLI) found that **all of them need explicit system-prompt instructions to parallelize**:
+An independent [analysis of exfiltrated system prompts](https://www.dbreunig.com/2026/02/10/system-prompts-define-the-agent-as-much-as-the-model.html) across multiple CLI coding agents found that **all of them need explicit system-prompt instructions to parallelize**. Kimi's own system prompt states, "you are HIGHLY RECOMMENDED to make [tool calls] in parallel."
 
-> "System prompts also repeatedly specify that tool calls should be parallel whenever possible. Claude should, 'maximize use of parallel tool calls where possible.' Cursor is sternly told, 'CRITICAL INSTRUCTION: involve all relevant tools concurrently… DEFAULT TO PARALLEL.' **Kimi adopts all-caps as well, stating, 'you are HIGHLY RECOMMENDED to make [tool calls] in parallel.'**
->
-> This likely reflects the fact that most post-training reasoning and agentic examples are **serial** in nature… system prompts need to override this training."
+> This likely reflects the fact that most post-training reasoning and agentic examples are **serial** in nature… system prompts need to override this training.
 
 The system prompt *suggests* parallelism. Hooks **enforce** it with tactile feedback the model sees in-context.
 
@@ -115,8 +85,8 @@ This means **hooks are the only tutoring channel available.** There is no persis
 ### 1. Clone / Copy
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/kimi-code-optimizations.git
-cd kimi-code-optimizations
+git clone https://github.com/YOUR_USERNAME/agent-harness-optimizations.git
+cd agent-harness-optimizations
 ```
 
 ### 2. Install Hooks
@@ -528,7 +498,6 @@ Shell(command="multi-read README.md ARTICLE.md AGENTS.md config.toml.example")
 - The shell-check hook allows this because the command string doesn't contain `cat`; the script reads files internally.
 - Returns formatted output with `--- FILE N: path ---` separators so the model can parse each file's contents.
 
-
 ## Known Bugs & Patches
 
 ### Background Subagents Bypass PreToolUse Hooks (Still needed in 1.40)
@@ -575,7 +544,7 @@ If Kimi adds native `apply_patch` in the future, this workaround becomes obsolet
 ## Project Structure
 
 ```
-kimi-code-optimizations/
+agent-harness-optimizations/
 ├── AGENTS.md                   # Project-level agent rules (Kimi)
 ├── README.md                   # This file
 ├── LICENSE                     # MIT
@@ -600,17 +569,7 @@ kimi-code-optimizations/
 │   │   ├── todo-persistence-check.py   # PostToolUse: detect todo list resets
 │   │   ├── taskoutput-guard.py         # PreToolUse: ensure TaskList before TaskOutput
 │   │   └── re-read-turn-guard.py       # PostToolUse: guard same-turn re-read storms
-│   └── claude/                     # Claude Code CLI hooks
-│       ├── edit-check.py           # PreToolUse: validate Edit old_string exists
-│       ├── re-read-guard.py        # PreToolUse: warn on re-reading unchanged files
-│       ├── parallel-agent-guard.py # PreToolUse: plan-time nudge toward parallel Agent batching
-│       ├── cheap-subagent-router.py# PreToolUse: triage subagent model (haiku/sonnet/opus)
-│       ├── parallel-fanout-nudge.py# UserPromptSubmit: fan-out hint on weaker lanes
-│       ├── web-tool-redirect.py    # PreToolUse: redirect WebFetch/WebSearch on 3rd-party endpoints
-│       └── _provider.py            # Shared provider detection utility
-└── claude/
-    ├── README.md                    # Claude-specific installation and diff table
-    └── settings.json.example        # Hook config snippet for ~/.claude/settings.json
+
 ```
 
 ## Requirements
@@ -620,11 +579,6 @@ kimi-code-optimizations/
 - GNU `patch` 2.7+ (usually preinstalled on Linux/macOS)
 - Kimi Code CLI 1.39+ (tested through 1.40.0)
 - Hooks load at session start — start a **new** `kimi` conversation after installing
-
-**Claude Code CLI:**
-- Python 3.10+
-- Claude Code CLI 2.x+
-- Hooks load at session start — restart `claude` after modifying `settings.json`
 
 ## Optimal Config for Swarm-Heavy Workflows
 
